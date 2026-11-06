@@ -1,16 +1,43 @@
 """
-codigo_intermedio.py  -  TP3 (Grupo 19)  -  AVANCE 1 + PASO 2 (sentencias de control)
+CodigoIntermedio.py  -  TP3 (Grupo 19)  -  generación de código intermedio con TERCETOS
 
 Representación elegida: TERCETOS      ( operador , operando1 , operando2 )
 
-Temas del grupo que toca este avance:
-  - Tema  4 : UINTEGER (constantes $ui)
-  - Tema  8 : DOUBLEF
-  - Tema 11 : WHILE ... REPEAT
-  - Tema 18 : asignaciones con '=' dentro de expresiones (el valor es el LADO IZQUIERDO)
-  - Tema 34 : conversión explícita float -> entero (TOUI) y chequeo de tipos asociado
-Temas que se agregan en avances siguientes: 21 (AUTO), 22 (COMPTIME), 27 (friend/private),
-28 (acceso con '.'), 32 (herencia, ambigüedad = error).
+=====================================================================================
+REGISTRO DE CAMBIOS
+=====================================================================================
+[AVANCE 1]  Infraestructura base: tercetos, ámbitos con name mangling, atributos
+            semánticos en la TS, chequeo de tipos del tema 34, expresiones, asignación
+            (tema 18), IF, WHILE (tema 11), POUT, RET.
+
+[PASO 2 - REVISIÓN]  (reconstruido a partir de lo descripto en AnalizadorSintactico.py)
+  - Sin tercetos LABEL: los destinos de salto son NÚMEROS DE TERCETO.
+        IF (c) A end_if          ->  c ; BF c,->fin ; A
+        IF (c) A else B end_if   ->  c ; BF c,->B ; A ; BI ->fin ; B
+        WHILE (c) repeat A       ->  [ini:] c ; BF c,->fin ; A ; BI ->ini
+  - control_pendiente(): lista de saltos todavía sin completar (debe quedar []).
+
+[PASO 3]  Funciones, invocaciones, retornos y AUTO (tema 21)
+  - VOID: nuevo tipo interno (resultado de invocar una función sin tipo de retorno).
+  - Operando: nuevo campo 'linea' (se usa para informar errores desde reglas que no
+    tienen terminales, como  factor : invocacion_funcion).
+  - Errores.sintactico(): errores estructurales que detecta el parser (ej: función sin
+    parámetros, falta de ret en AUTO) pero que se muestran junto con los demás.
+  - iniciar_funcion / declarar_parametros / finalizar_funcion:
+        * la función se declara en el ámbito que la contiene      (aa:main)
+        * se entra a su ámbito: sus parámetros y locales quedan   (x:main:aa)
+        * cada función tiene su PROPIA estructura de tercetos (UnidadCodigo)
+  - retorno(): chequea el tipo del ret contra el tipo de la función (reglas del tema 34);
+    AUTO acumula los tipos devueltos.
+  - Retorno por defecto: toda función no-AUTO termina con un RET por defecto
+    (enunciado: "se asumirá un valor de retorno por defecto del tipo devuelto").
+  - AUTO (tema 21): el tipo de la función es el MÁS ABARCATIVO de sus retornos
+    (DOUBLEF si alguno es DOUBLEF; si no, UINTEGER). Se fija al terminar de compilarla.
+  - invocacion(): chequea que exista, que sea función, cantidad de parámetros y
+    compatibilidad de tipos; genera la COPIA de cada real sobre su formal (pasaje por
+    copia, en orden) y luego el terceto CALL.
+  - valor_invocacion(): una función VOID no puede usarse dentro de una expresión.
+=====================================================================================
 """
 
 from dataclasses import dataclass
@@ -23,10 +50,12 @@ from TablaSimbolos import TablaSimbolos
 UINTEGER = 'UINTEGER'   # tema 4  (entero)
 DOUBLEF = 'DOUBLEF'     # tema 8  (flotante)
 BOOL = 'BOOL'           # tipo interno: resultado de una comparación
+VOID = 'VOID'           # [PASO 3] tipo interno: función sin retorno
 ERROR = 'ERROR'         # tipo interno: evita errores en cascada
+AUTO = 'AUTO'           # [PASO 3] tipo declarado de las funciones AUTO (tema 21)
 TIPOS_BASICOS = {UINTEGER, DOUBLEF}
 
-# Decisión de diseño pendiente (ver preguntas): ¿se permite asignar entero a flotante sin conversión?
+# Decisión de diseño pendiente: ¿se permite asignar entero a flotante sin conversión?
 # El tema 34 solo EXIGE conversión en el sentido flotante -> entero.
 PERMITE_ENTERO_A_FLOAT = False
 
@@ -38,7 +67,7 @@ class TablaSimbolosSemantica(TablaSimbolos):
     """
     Extiende la TablaSimbolos del TP1 sin tocarla. El TP3 pide agregar a cada
     entrada: TIPO y USO (variable, función, parámetro, clase, ...), y otros
-    atributos que el compilador necesite (ámbito, tipo de retorno, etc.).
+    atributos que el compilador necesite (ámbito, tipo de retorno, parámetros, etc.).
     """
 
     def registrar(self, lexema, token, **atributos):
@@ -49,16 +78,23 @@ class TablaSimbolosSemantica(TablaSimbolos):
         return self._simbolos.get((str(lexema), token))
 
     def imprimir_tabla(self):
-        ancho = 100
+        ancho = 110
         print("\n" + "=" * ancho)
         print(f"{'TABLA DE SÍMBOLOS':^{ancho}}")
         print("=" * ancho)
-        print(f"{'LEXEMA':<28} | {'TOKEN':<12} | {'TIPO':<10} | {'USO':<20} | VALOR")
+        print(f"{'LEXEMA':<28} | {'TOKEN':<12} | {'TIPO':<10} | {'USO':<10} | DETALLE")
         print("-" * ancho)
         for s in self._simbolos.values():
-            val = str(s['valor']) if s['valor'] is not None else '-'
+            if s.get('uso') == 'funcion':
+                # [PASO 3] las funciones muestran sus parámetros formales (nombre mangleado:tipo)
+                formales = ', '.join(f"{n}:{t}" for n, t in s.get('parametros', []))
+                detalle = f"parametros=[{formales}]"
+            else:
+                detalle = str(s['valor']) if s['valor'] is not None else '-'
+                if s.get('comptime'):
+                    detalle += ' (comptime)'
             print(f"{s['lexema']:<28} | {s['token']:<12} | {str(s.get('tipo') or '-'):<10} | "
-                  f"{str(s.get('uso') or '-'):<20} | {val[:20]}")
+                  f"{str(s.get('uso') or '-'):<10} | {detalle}")
         print("=" * ancho + "\n")
 
 
@@ -71,6 +107,10 @@ class Errores:
 
     def semantico(self, linea, mensaje):
         self.lista.append((linea, f"Error Semántico: {mensaje}"))
+
+    # [PASO 3] NUEVO: errores estructurales detectados por el parser.
+    def sintactico(self, linea, mensaje):
+        self.lista.append((linea, f"Error Sintáctico: {mensaje}"))
 
     def warning(self, linea, mensaje):
         self.lista.append((linea, f"Warning: {mensaje}"))
@@ -91,6 +131,7 @@ class GestorAmbitos:
     Mantiene la PILA de ámbitos. Cada símbolo se guarda en la Tabla de Símbolos
     con su nombre + ':' + ámbito completo:
         a declarada en main            ->  a:main
+        la función aa (declarada en main) ->  aa:main
         parámetro x de la función aa   ->  x:main:aa
     Reglas de alcance (enunciado):
       - un símbolo es visible en su ámbito y en los ámbitos contenidos en él
@@ -165,6 +206,7 @@ class UnidadCodigo:
         return len(self.tercetos) - 1
 
     def proximo(self) -> int:
+        """Número del próximo terceto que se va a emitir (destino de un salto hacia adelante)."""
         return len(self.tercetos)
 
     def completar_salto(self, idx, destino):
@@ -188,6 +230,7 @@ class UnidadCodigo:
 class Operando:
     ref: Union[int, str, None]   # int -> resultado de un terceto ; str -> símbolo/constante de la TS
     tipo: str
+    linea: int = 0               # [PASO 3] línea donde se originó (para informar errores)
 
 
 ERR = Operando(None, ERROR)
@@ -205,6 +248,7 @@ class GeneradorCodigo:
         self.terminadas = []        # unidades de funciones ya cerradas
         self.pila_control = []      # saltos pendientes de completar (if / while)
         self.pila_funciones = []    # contexto de la función que se está compilando
+        self._n_sin_nombre = 0      # [PASO 3] contador para funciones/parámetros sin nombre
 
     @property
     def unidad(self) -> UnidadCodigo:
@@ -218,21 +262,20 @@ class GeneradorCodigo:
         if info.get('uso') not in ('variable', 'parametro'):
             self.errores.semantico(linea, f"'{nombre}' es {info.get('uso')} y se usa como variable.")
             return ERR
-        return Operando(mangleado, info['tipo'])
+        return Operando(mangleado, info['tipo'], linea)
 
     def constante_ui(self, valor) -> Operando:
-        # [PASO 1] CAMBIO: además de armar el operando, deja registrado el TIPO de la
-        # constante en la TS (el TP3 pide que las constantes tengan tipo).
+        # Además de armar el operando, deja registrado el TIPO de la constante en la TS
+        # (el TP3 pide que las constantes tengan tipo).
         lexema = f"{valor}$ui"          # misma clave que usa el léxico al insertar
         self.tabla.registrar(lexema, 'CONST_UI', tipo=UINTEGER)
         return Operando(lexema, UINTEGER)
 
     def constante_float(self, lexema) -> Operando:
-        # [PASO 1] CAMBIO: igual que arriba. 'lexema' es la clave de la TS (token 'FLOAT').
+        # 'lexema' es la clave de la TS (token 'FLOAT').
         self.tabla.registrar(lexema, 'FLOAT', tipo=DOUBLEF)
         return Operando(lexema, DOUBLEF)
 
-    # [PASO 1] NUEVO: declaración de variables llamada desde el parser.
     def declarar_variables(self, tipo, nombres, linea, comptime=False):
         """Registra cada variable en el ámbito actual (con name mangling) con su tipo.
         'comptime' queda guardado como atributo para el avance del tema 22."""
@@ -251,6 +294,17 @@ class GeneradorCodigo:
             return None
         return t1
 
+    # [PASO 3] NUEVO: regla única de compatibilidad "lado derecho -> lado izquierdo".
+    # La usan la asignación, el ret y el pasaje de parámetros (el enunciado dice que en
+    # los parámetros se aplican las reglas de los temas 33/34/35 como en las asignaciones).
+    def _compatible(self, destino, origen) -> bool:
+        return destino == origen or (
+            PERMITE_ENTERO_A_FLOAT and destino == DOUBLEF and origen == UINTEGER)
+
+    @staticmethod
+    def _pista_conversion(destino, origen) -> str:
+        return " Usar TOUI(...)." if destino == UINTEGER and origen == DOUBLEF else ""
+
     # ---------------- expresiones ----------------
     def operacion(self, op, izq, der, linea) -> Operando:
         """op en {'+','-','*','/'}"""
@@ -259,7 +313,7 @@ class GeneradorCodigo:
         tipo = self._tipo_resultado(izq.tipo, der.tipo, linea)
         if tipo is None:
             return ERR
-        return Operando(self.unidad.emitir(op, izq.ref, der.ref, tipo), tipo)
+        return Operando(self.unidad.emitir(op, izq.ref, der.ref, tipo), tipo, linea)
 
     def negar(self, expr, linea) -> Operando:
         if expr.tipo == ERROR:
@@ -267,7 +321,7 @@ class GeneradorCodigo:
         if expr.tipo == UINTEGER:
             self.errores.semantico(linea, "no se puede aplicar signo negativo a un UINTEGER.")
             return ERR
-        return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo)
+        return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo, linea)
 
     def comparacion(self, op, izq, der, linea) -> Operando:
         """op en {'<','<=','>','>=','==','!='}"""
@@ -275,7 +329,7 @@ class GeneradorCodigo:
             return ERR
         if self._tipo_resultado(izq.tipo, der.tipo, linea) is None:
             return ERR
-        return Operando(self.unidad.emitir(op, izq.ref, der.ref, BOOL), BOOL)
+        return Operando(self.unidad.emitir(op, izq.ref, der.ref, BOOL), BOOL, linea)
 
     def convertir_toui(self, expr, linea) -> Operando:
         """Tema 34: TOUI(expr) convierte DOUBLEF -> UINTEGER."""
@@ -284,35 +338,88 @@ class GeneradorCodigo:
         if expr.tipo != DOUBLEF:
             self.errores.semantico(linea, f"TOUI espera una expresión DOUBLEF y recibió {expr.tipo}.")
             return ERR
-        return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER)
+        return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER, linea)
 
     def asignacion(self, destino, expr, linea) -> Operando:
         """
         Sirve para ':=' (sentencia) y para '=' embebido (tema 18): misma estructura.
-        Devuelve el LADO IZQUIERDO como valor de la expresión (corrección pedida:
-        antes el parser tomaba el derecho).
+        Devuelve el LADO IZQUIERDO como valor de la expresión.
         """
         if ERROR in (destino.tipo, expr.tipo):
             return destino
-        compatible = destino.tipo == expr.tipo or (
-            PERMITE_ENTERO_A_FLOAT and destino.tipo == DOUBLEF and expr.tipo == UINTEGER)
-        if not compatible:
-            extra = " Usar TOUI(...)." if destino.tipo == UINTEGER and expr.tipo == DOUBLEF else ""
-            self.errores.semantico(linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}.{extra}")
+        if not self._compatible(destino.tipo, expr.tipo):
+            self.errores.semantico(
+                linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}."
+                       f"{self._pista_conversion(destino.tipo, expr.tipo)}")
             return destino
         self.unidad.emitir(':=', destino.ref, expr.ref, destino.tipo)
         return destino
 
-    # ---------------- salida y retorno ----------------
+    # ---------------- salida ----------------
     def salida_expresion(self, expr):
         if expr.tipo != ERROR:
             self.unidad.emitir('POUT', expr.ref, None, expr.tipo)
 
     def salida_cadena(self, texto):
-        # [PASO 1] CAMBIO: el léxico entrega el texto SIN llaves, pero la clave en la TS
-        # es el lexema original CON llaves; se reconstruye acá para referenciar la TS.
+        # El léxico entrega el texto SIN llaves, pero la clave en la TS es el lexema
+        # original CON llaves; se reconstruye acá para referenciar la TS.
         lexema_ts = '{' + texto + '}'
         self.unidad.emitir('POUT', lexema_ts, None, 'CADENA')
+
+    # ======================================================================
+    # [PASO 3] FUNCIONES
+    # ======================================================================
+    def iniciar_funcion(self, nombre, tipo_retorno, linea, sin_nombre=False):
+        """
+        Se llama cuando el parser reconoce  <tipo> FUNCTION <ID>  (antes de los parámetros).
+          1) declara la función en el ámbito que la contiene          -> nombre:ambito
+          2) entra al ámbito de la función (sus parámetros y locales quedan nombre:...:f)
+          3) abre una estructura de tercetos independiente para su cuerpo
+        tipo_retorno: UINTEGER / DOUBLEF / nombre de clase / VOID / AUTO
+        """
+        if sin_nombre:      # el parser detectó "falta el nombre de la función"
+            self._n_sin_nombre += 1
+            nombre = f"sin_nombre_{self._n_sin_nombre}"
+
+        padre = self.ambitos.ambito_actual()
+        mangleado = f"{nombre}:{padre}"
+        ok = self.ambitos.declarar(nombre, tipo_retorno, 'funcion', linea, parametros=[]) is not None
+        if ok:
+            info, ambito = self.tabla.buscar(mangleado), nombre
+        else:
+            # Función redeclarada: se compila igual el cuerpo (para detectar más errores),
+            # en un ámbito aparte para no tocar la entrada original de la TS.
+            info, ambito, mangleado = {}, f"{nombre}#redeclarada", f"{mangleado}#redeclarada"
+
+        self.ambitos.entrar(ambito)
+        self.pila_unidades.append(UnidadCodigo(mangleado))
+        self.pila_funciones.append({'nombre': mangleado, 'tipo': tipo_retorno, 'linea': linea,
+                                    'info': info, 'cant_ret': 0, 'tipos_ret': []})
+
+    def declarar_parametros(self, parametros, linea):
+        """Registra los parámetros formales en el ámbito de la función (x:main:aa) y deja
+        en la entrada de la función la lista [(nombre_mangleado, tipo), ...] que se usa
+        para chequear las invocaciones."""
+        f = self.pila_funciones[-1]
+        formales = []
+        for prm in parametros:
+            nombre, tipo = prm['id'], prm['tipo_dato']
+            if tipo == 'UNKNOWN':
+                tipo = ERROR
+            if nombre == 'UNKNOWN':
+                self._n_sin_nombre += 1
+                nombre = f"param_sin_nombre_{self._n_sin_nombre}"
+            mangleado = self.ambitos.declarar(nombre, tipo, 'parametro', linea)
+            if mangleado is not None:
+                formales.append((mangleado, tipo))
+        f['info']['parametros'] = formales
+
+    def falta_retorno(self):
+        """El parser detectó un cuerpo AUTO que no termina con 'ret'."""
+        f = self.pila_funciones[-1]
+        self.errores.sintactico(
+            f['linea'], f"la función AUTO '{f['nombre']}' debe terminar con una sentencia 'ret' "
+                        f"(falta el retorno).")
 
     def retorno(self, expr, linea):
         if not self.pila_funciones:
@@ -320,101 +427,164 @@ class GeneradorCodigo:
             return
         f = self.pila_funciones[-1]
         f['cant_ret'] += 1
-        if expr.tipo != ERROR:
-            if f['tipo'] == 'AUTO':
-                f['tipos_ret'].append(expr.tipo)       # el tipo final se resuelve en el avance de AUTO
-            elif f['tipo'] != expr.tipo:
-                self.errores.semantico(linea, f"'ret' devuelve {expr.tipo} pero la función '{f['nombre']}' devuelve {f['tipo']}.")
+        if expr.tipo == ERROR:
+            return
+        if f['tipo'] == VOID:
+            self.errores.semantico(linea, f"la función '{f['nombre']}' es VOID y no puede devolver un valor.")
+            return
+        if f['tipo'] == AUTO:
+            if expr.tipo not in TIPOS_BASICOS:
+                self.errores.semantico(linea, f"'ret' de una función AUTO devuelve {expr.tipo}; se esperaba UINTEGER o DOUBLEF.")
+                return
+            f['tipos_ret'].append(expr.tipo)      # el tipo final se resuelve en finalizar_funcion
+        elif not self._compatible(f['tipo'], expr.tipo):
+            self.errores.semantico(
+                linea, f"'ret' devuelve {expr.tipo} pero la función '{f['nombre']}' devuelve {f['tipo']}."
+                       f"{self._pista_conversion(f['tipo'], expr.tipo)}")
+            return
         self.unidad.emitir('RET', expr.ref, None, expr.tipo)
 
-    # ---------------- funciones: una unidad de código por función ----------------
-    def iniciar_funcion(self, nombre_mangleado, tipo_retorno):
-        self.pila_unidades.append(UnidadCodigo(nombre_mangleado))
-        self.pila_funciones.append({'nombre': nombre_mangleado, 'tipo': tipo_retorno,
-                                    'cant_ret': 0, 'tipos_ret': []})
+    def _valor_por_defecto(self, tipo) -> Optional[Operando]:
+        # Estas constantes no vienen del léxico (el programa puede no tenerlas escritas), así
+        # que además de registrar su tipo se les completa el valor si la TS no lo tiene.
+        if tipo == UINTEGER:
+            op, token, valor = self.constante_ui(0), 'CONST_UI', 0
+        elif tipo == DOUBLEF:
+            op, token, valor = self.constante_float('0.0'), 'FLOAT', 0.0
+        else:
+            return None
+        entrada = self.tabla.buscar(op.ref, token)
+        if entrada.get('valor') is None:
+            entrada['valor'] = valor
+        return op
 
-    def finalizar_funcion(self, linea):
-        info = self.pila_funciones.pop()
-        if info['tipo'] == 'AUTO' and info['cant_ret'] == 0:
-            self.errores.semantico(linea, f"la función AUTO '{info['nombre']}' debe tener al menos un 'ret'.")
+    def finalizar_funcion(self):
+        """
+        Se llama al terminar de reconocer la función completa.
+          - AUTO: fija el tipo de retorno = el más abarcativo entre sus 'ret' (tema 21)
+          - VOID / tipadas: agrega el RET por defecto al final (enunciado: "se asumirá un
+            valor de retorno por defecto, del tipo devuelto por la función"). Se agrega
+            SIEMPRE: así los saltos que apuntan al final de la función tienen destino.
+          - cierra la estructura de tercetos de la función y sale de su ámbito.
+        """
+        f = self.pila_funciones.pop()
+        if f['tipo'] == AUTO:
+            tipos = f['tipos_ret']
+            if DOUBLEF in tipos:
+                resuelto = DOUBLEF
+            elif UINTEGER in tipos:
+                resuelto = UINTEGER
+            else:
+                resuelto = ERROR            # sin ret válidos: ya se informó el error
+            f['info']['tipo'] = resuelto
+        elif f['tipo'] == VOID:
+            self.unidad.emitir('RET', None, None, VOID)
+        else:
+            defecto = self._valor_por_defecto(f['tipo'])
+            self.unidad.emitir('RET', defecto.ref if defecto else None, None, f['tipo'])
         self.terminadas.append(self.pila_unidades.pop())
-        return info
+        self.ambitos.salir()
+        return f
 
-    # ------------------------------------------------------------------
-    # [PASO 2 - REVISIÓN] Sentencias de control SIN tercetos LABEL, siguiendo los
-    # pasos recomendados por la cátedra.
-    #
-    # Convención:  DIR_ACTUAL = número del ÚLTIMO terceto emitido.
-    #              self.unidad.proximo() = DIR_ACTUAL + 1 = próximo terceto a emitir.
-    #
-    # pila_control guarda tuplas (tipo, nro_terceto) para detectar desbalances que
-    # puedan dejar los errores sintácticos:
-    #     ('BF', n)      BF incompleto           ('BI', n)      BI incompleto
-    #     ('INICIO', n)  terceto donde empieza la condición de un WHILE
-    #
-    #   IF (c) A end_if        ->  [cond] BF(c,->fin) [A]  fin:
-    #   IF (c) A else B end_if ->  [cond] BF(c,->B) [A] BI(->fin) B: [B]  fin:
-    #   WHILE (c) repeat A     ->  ini: [cond] BF(c,->fin) [A] BI(->ini)  fin:
-    #
-    # OJO: un destino puede ser == len(tercetos) si la sentencia es lo último de la
-    # unidad (no hay terceto "siguiente"). En el TP4 ese destino se trata como una
-    # etiqueta al final del código de la unidad.
-    # ------------------------------------------------------------------
-    def _tope_es(self, *tipos) -> bool:
-        return bool(self.pila_control) and self.pila_control[-1][0] in tipos
+    # ---------------- invocaciones ----------------
+    def invocacion(self, nombre, argumentos, linea) -> Operando:
+        """
+        Chequeos (enunciado, 'Invocaciones'):
+          - la función existe y es visible
+          - es realmente una función (uso correcto del símbolo)
+          - cantidad de parámetros reales == cantidad de parámetros formales
+          - tipo de cada real compatible con el del formal (mismas reglas que la asignación)
+        Código: pasaje POR COPIA. Antes del CALL se copia cada real sobre su formal, en orden:
+                ( := , formal , real )   ...   ( CALL , función , - )
+        El valor de la invocación es el propio terceto CALL.
+        """
+        mangleado, info = self.ambitos.resolver(nombre, linea)
+        if info is None:
+            return ERR
+        if info.get('uso') != 'funcion':
+            self.errores.semantico(linea, f"'{nombre}' es {info.get('uso')} y se invoca como función.")
+            return ERR
+        tipo = info['tipo']
+        if tipo == AUTO:
+            self.errores.semantico(
+                linea, f"la función AUTO '{nombre}' se invoca antes de que su tipo de retorno "
+                       f"quede determinado (invocación recursiva).")
+            return ERR
+        formales = info.get('parametros', [])
+        if len(argumentos) != len(formales):
+            self.errores.semantico(
+                linea, f"la función '{nombre}' espera {len(formales)} parámetro(s) y se invocó con "
+                       f"{len(argumentos)}.")
+            return ERR
+        correcto = True
+        for i, ((_, t_formal), real) in enumerate(zip(formales, argumentos), start=1):
+            if ERROR in (t_formal, real.tipo):
+                correcto = False
+            elif not self._compatible(t_formal, real.tipo):
+                self.errores.semantico(
+                    linea, f"parámetro {i} de '{nombre}': se esperaba {t_formal} y se recibió "
+                           f"{real.tipo}.{self._pista_conversion(t_formal, real.tipo)}")
+                correcto = False
+        if not correcto or tipo == ERROR:
+            return ERR
+        for (formal, t_formal), real in zip(formales, argumentos):
+            self.unidad.emitir(':=', formal, real.ref, t_formal)
+        return Operando(self.unidad.emitir('CALL', mangleado, None, tipo), tipo, linea)
 
-    # ---------------- IF ----------------
+    def valor_invocacion(self, op) -> Operando:
+        """Una invocación usada DENTRO de una expresión debe devolver valor."""
+        if op.tipo == VOID:
+            self.errores.semantico(op.linea, "la función es VOID: no devuelve valor y no puede usarse en una expresión.")
+            return ERR
+        return op
+
+    # ---------------- IF (con backpatching) ----------------
     def if_condicion(self, cond, linea):
-        """TERMINA LA CONDICIÓN: 1) crea el BF incompleto  2) apila su número."""
+        """Después de parsear la condición: emite BF (salta si es falsa) con destino pendiente."""
         if cond.tipo not in (BOOL, ERROR):
             self.errores.semantico(linea, "la condición del IF debe ser una comparación.")
-        bf = self.unidad.emitir('BF', cond.ref, None)
-        self.pila_control.append(('BF', bf))
+        self.pila_control.append(self.unidad.emitir('BF', cond.ref, None))
 
     def if_else(self):
-        """FIN DEL THEN (hay ELSE): 1) desapila el BF  2) crea el BI incompleto
-        3) completa el BF con DIR_ACTUAL+2 (= primer terceto del else, justo
-        después del BI)  4) apila el BI."""
-        if not self._tope_es('BF'):
-            return                          # protección ante errores sintácticos
-        _, bf = self.pila_control.pop()
+        """Al llegar al ELSE: cierra la rama then con un salto incondicional (BI, destino
+        pendiente) y completa el BF para que apunte al primer terceto de la rama else."""
+        if not self.pila_control:       # protección ante errores sintácticos
+            return
+        bf = self.pila_control.pop()
         bi = self.unidad.emitir('BI')
-        self.unidad.completar_salto(bf, self.unidad.proximo())
-        self.pila_control.append(('BI', bi))
+        self.unidad.completar_salto(bf, self.unidad.proximo())      # = nº del BI + 1
+        self.pila_control.append(bi)
 
     def if_fin(self):
-        """FIN DEL IF: desapila el salto pendiente (BI si hubo else, BF si no) y lo
-        completa con DIR_ACTUAL+1 (= próximo terceto a emitir)."""
-        if not self._tope_es('BF', 'BI'):
-            return                          # protección ante errores sintácticos
-        _, pendiente = self.pila_control.pop()
+        """Al llegar al END_IF: completa el salto pendiente (BF si no hubo else, BI si lo hubo)
+        con el número del próximo terceto."""
+        if not self.pila_control:       # protección ante errores sintácticos
+            return
+        pendiente = self.pila_control.pop()
         self.unidad.completar_salto(pendiente, self.unidad.proximo())
 
     # ---------------- WHILE ... REPEAT (tema 11) ----------------
     def while_inicio(self):
-        """ANTES DE LA CONDICIÓN: apila el número del terceto donde empieza."""
-        self.pila_control.append(('INICIO', self.unidad.proximo()))
+        """Antes de la condición: apila el número del terceto donde empieza (para volver)."""
+        self.pila_control.append(self.unidad.proximo())
 
     def while_condicion(self, cond, linea):
-        """TERMINA LA CONDICIÓN: crea el BF incompleto y apila su número."""
         if cond.tipo not in (BOOL, ERROR):
             self.errores.semantico(linea, "la condición del WHILE debe ser una comparación.")
-        bf = self.unidad.emitir('BF', cond.ref, None)
-        self.pila_control.append(('BF', bf))
+        self.pila_control.append(self.unidad.emitir('BF', cond.ref, None))
 
     def while_fin(self):
-        """FIN DEL CUERPO: 1) desapila el BF  2) desapila el inicio  3) genera el BI
-        al inicio  4) completa el BF con el terceto siguiente al BI."""
-        if (len(self.pila_control) < 2 or self.pila_control[-1][0] != 'BF'
-                or self.pila_control[-2][0] != 'INICIO'):
-            return                          # protección ante errores sintácticos
-        _, bf = self.pila_control.pop()
-        _, inicio = self.pila_control.pop()
+        """Tras el cuerpo: BI al inicio de la condición y completa el BF para salir del ciclo."""
+        if len(self.pila_control) < 2:  # protección ante errores sintácticos
+            self.pila_control.clear()
+            return
+        bf = self.pila_control.pop()
+        inicio = self.pila_control.pop()
         self.unidad.emitir('BI', inicio)
         self.unidad.completar_salto(bf, self.unidad.proximo())
 
     def control_pendiente(self):
-        """Para depurar: saltos que quedaron sin completar (debería ser lista vacía)."""
+        """Saltos sin completar. Al terminar de compilar debe ser []."""
         return list(self.pila_control)
 
     # ---------------- salida ----------------
@@ -433,43 +603,53 @@ if __name__ == '__main__':
     amb = GestorAmbitos(tabla, errores)
     gen = GeneradorCodigo(tabla, errores, amb)
 
-    amb.declarar('a', UINTEGER, 'variable', 2)
-    amb.declarar('b', UINTEGER, 'variable', 2)
-    amb.declarar('x', DOUBLEF, 'variable', 3)
-    amb.declarar('a', UINTEGER, 'variable', 4)        # ERROR: redeclaración en main
-
     V = lambda n, l: gen.variable(n, l)
     UI = gen.constante_ui
+    F = gen.constante_float
 
-    # b := a + 2$ui * a;
-    t = gen.operacion('+', V('a', 6), gen.operacion('*', UI(2), V('a', 6), 6), 6)
-    gen.asignacion(V('b', 6), t, 6)
+    amb.declarar('a', UINTEGER, 'variable', 1)
+    amb.declarar('b', UINTEGER, 'variable', 1)
+    amb.declarar('x', DOUBLEF, 'variable', 2)
 
-    # a := b = 3$ui;        (tema 18: asignación embebida, vale el lado izquierdo)
-    gen.asignacion(V('a', 7), gen.asignacion(V('b', 7), UI(3), 7), 7)
+    # UINTEGER FUNCTION suma(UINTEGER p, UINTEGER q) UINTEGER r; begin r := p + q; ret(r); end;
+    gen.iniciar_funcion('suma', UINTEGER, 4)
+    gen.declarar_parametros([{'tipo_dato': UINTEGER, 'id': 'p'}, {'tipo_dato': UINTEGER, 'id': 'q'}], 4)
+    gen.declarar_variables(UINTEGER, ['r'], 5)
+    gen.asignacion(V('r', 7), gen.operacion('+', V('p', 7), V('q', 7), 7), 7)
+    gen.retorno(V('r', 8), 8)
+    gen.finalizar_funcion()
 
-    # while (a < 10$ui) repeat a := a + 1$ui;
-    gen.while_inicio()
-    gen.while_condicion(gen.comparacion('<', V('a', 9), UI(10), 9), 9)
-    gen.asignacion(V('a', 9), gen.operacion('+', V('a', 9), UI(1), 9), 9)
-    gen.while_fin()
-
-    # if (a == 5$ui) pout(a) else b := a end_if;
-    gen.if_condicion(gen.comparacion('==', V('a', 11), UI(5), 11), 11)
-    gen.salida_expresion(V('a', 11))
-    gen.if_else()
-    gen.asignacion(V('b', 12), V('a', 12), 12)
+    # AUTO FUNCTION elegir(UINTEGER n) begin if (n > 0$ui) ret(1.5); end_if; ret(n); end;
+    gen.iniciar_funcion('elegir', AUTO, 11)
+    gen.declarar_parametros([{'tipo_dato': UINTEGER, 'id': 'n'}], 11)
+    gen.if_condicion(gen.comparacion('>', V('n', 13), UI(0), 13), 13)
+    gen.retorno(F('1.5'), 14)
     gen.if_fin()
+    gen.retorno(V('n', 16), 16)
+    gen.finalizar_funcion()
 
-    # a := toui(x) + b;     (tema 34: válido)
-    gen.asignacion(V('a', 14), gen.operacion('+', gen.convertir_toui(V('x', 14), 14), V('b', 14), 14), 14)
+    # FUNCTION informar(UINTEGER n) begin pout(n); end;
+    gen.iniciar_funcion('informar', VOID, 19)
+    gen.declarar_parametros([{'tipo_dato': UINTEGER, 'id': 'n'}], 19)
+    gen.salida_expresion(V('n', 21))
+    gen.finalizar_funcion()
+
+    # ---- programa principal ----
+    gen.asignacion(V('a', 25), gen.valor_invocacion(gen.invocacion('suma', [UI(1), UI(2)], 25)), 25)
+    gen.invocacion('informar', [V('a', 26)], 26)                          # como sentencia
+    gen.asignacion(V('x', 27), gen.valor_invocacion(gen.invocacion('elegir', [V('a', 27)], 27)), 27)
+    gen.asignacion(V('b', 28), gen.convertir_toui(V('x', 28), 28), 28)
 
     # ---- errores a detectar ----
-    gen.asignacion(V('a', 16), V('x', 16), 16)                 # UINTEGER := DOUBLEF sin TOUI
-    gen.operacion('+', V('a', 17), V('x', 17), 17)             # UINTEGER + DOUBLEF sin TOUI
-    V('zzz', 18)                                               # no declarada
+    gen.invocacion('suma', [UI(1)], 31)                                   # cantidad de parámetros
+    gen.invocacion('suma', [F('2.5'), UI(1)], 32)                         # DOUBLEF -> UINTEGER sin TOUI
+    gen.asignacion(V('a', 33), gen.valor_invocacion(gen.invocacion('informar', [UI(1)], 33)), 33)   # VOID en expresión
+    gen.invocacion('a', [UI(1)], 34)                                      # variable usada como función
+    gen.invocacion('noexiste', [UI(1)], 35)                               # no declarada
+    gen.retorno(UI(1), 36)                                                # ret fuera de función
+    V('suma', 37)                                                         # función usada como variable
 
     gen.imprimir()
-    print('Saltos sin completar:', gen.control_pendiente())
+    print('Saltos sin completar (debe ser []):', gen.control_pendiente())
     errores.imprimir()
     tabla.imprimir_tabla()

@@ -44,9 +44,30 @@ generadas); lo NO migrado sigue devolviendo diccionarios hasta su paso.
   - Generador sin tercetos LABEL (ver CodigoIntermedio.py).
   - main: imprime los saltos sin completar (debe ser []).
 
+[PASO 3]  Funciones, invocaciones, RET y AUTO migrados a tercetos
+  - Marcadores (igual que en IF/WHILE) para abrir y cerrar el ÁMBITO de la función:
+        nombre_funcion  : <tipo> FUNCTION ID | FUNCTION ID | (variantes con 'error')
+        nombre_auto     : AUTO FUNCTION ID | AUTO FUNCTION error
+        encabezado_funcion / encabezado_auto : nombre "(" lista_parametros ")"
+        declaracion_funcion : encabezado bloque_declarativo cuerpo ";"
+    Se mantienen DOS encabezados para conservar la distinción original: AUTO exige
+    'bloque_auto' (termina con ret) y las demás 'bloque_obligatorio'.
+  - Las 3 reglas de declaración de función y sus 3 reglas de error ('falta el nombre')
+    dejaron de armar dicts: ahora declaran, abren el ámbito y devuelven None.
+  - sentencia_retorno : genera (RET, expr, -) y chequea el tipo contra la función.
+  - invocacion_funcion: chequea existencia, uso, cantidad y tipos de parámetros; genera la
+    copia de cada real sobre su formal y el terceto CALL. Devuelve un Operando.
+  - factor : invocacion_funcion  ->  una función VOID no puede usarse en una expresión.
+  - CORRECCIONES pedidas al analizador:
+      * funciones con al menos UN parámetro (se informa si no hay ninguno)
+      * AUTO sin ret: nueva regla 'BEGIN sentencias_no_retorno END' (antes el parser decía
+        "símbolo inesperado 'end'"; ahora informa la falta de retorno)
+  - LIMITACIÓN TEMPORAL: los MÉTODOS de clase siguen sin ámbito propio (PASO 5): si el
+    cuerpo de un método usa 'ret' o variables, se compila contra 'main' y puede dar
+    errores falsos. Los tests de este paso no usan clases.
+
 PRÓXIMOS PASOS PREVISTOS
-  [PASO 3] ámbitos de función, invocaciones, RET, AUTO  (+ correcciones: >=1 parámetro,
-           falta de RET en AUTO)
+  [PASO 4] COMPTIME
   [PASO 4] COMPTIME
   [PASO 5] clases, private/friend, acceso con '.', herencia (+ corrección de 'extends')
 =====================================================================================
@@ -56,8 +77,9 @@ import json
 from sly import Parser
 from AnalizadorLexico import AnalizadorLexico
 # [PASO 1] CAMBIO: se importa la infraestructura de tercetos desde el archivo aparte.
+# [PASO 3] CAMBIO: además se importan VOID y AUTO (tipos de retorno de las funciones).
 from CodigoIntermedio import (GeneradorCodigo, GestorAmbitos, Errores,
-                               TablaSimbolosSemantica, ERR)
+                               TablaSimbolosSemantica, ERR, VOID, AUTO)
 
 # [PASO 1] NUEVO: interruptor para el pseudo-árbol. Dejarlo en True mientras queden
 # partes sin migrar; ponerlo en False cuando todo genere tercetos.
@@ -165,40 +187,75 @@ class AnalizadorSintactico(Parser):
             'variables': p.lista_ids
         }
 
-    @_('tipo_dato FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': p.tipo_dato,
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    # ------------------------------------------------------------------
+    # [PASO 3] FUNCIONES migradas a tercetos.
+    #
+    # PROBLEMA: el ámbito de la función hay que abrirlo ANTES de leer sus parámetros y su
+    # cuerpo (para que queden como x:main:aa) y cerrarlo al final. SLY no permite acciones a
+    # mitad de regla, así que (igual que en IF/WHILE) la declaración se parte en no
+    # terminales "marcador":
+    #
+    #   nombre_funcion      : <tipo> FUNCTION ID | FUNCTION ID   -> declara la función y ABRE su ámbito
+    #   nombre_auto         : AUTO FUNCTION ID                   -> idem, con tipo AUTO (tema 21)
+    #   encabezado_*        : nombre "(" lista_parametros ")"    -> declara los parámetros formales
+    #   declaracion_funcion : encabezado bloque_declarativo cuerpo ";"   -> CIERRA el ámbito
+    #
+    # Se mantienen DOS encabezados (normal / AUTO) para no perder la distinción de la
+    # gramática original: la AUTO exige 'bloque_auto' (termina con ret) y las demás usan
+    # 'bloque_obligatorio'. Ya no se arma ningún dict: estas reglas devuelven None.
+    # ------------------------------------------------------------------
 
-    # El bloque_auto es para que tenga ret explícito
-    @_('AUTO FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_auto ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'AUTO',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_auto['cuerpo'],
-            'expresion_retorno': p.bloque_auto['retorno']
-        }
+    # [PASO 3] NUEVO: tipada. El nombre y el tipo se declaran en la TS (nombre:ámbito).
+    @_('tipo_dato FUNCTION ID')
+    def nombre_funcion(self, p):
+        self.gen.iniciar_funcion(p.ID, p.tipo_dato, self._linea(p))
+        return None
 
-    @_('FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
+    # [PASO 3] NUEVO: sin tipo = VOID.
+    @_('FUNCTION ID')
+    def nombre_funcion(self, p):
+        self.gen.iniciar_funcion(p.ID, VOID, self._linea(p))
+        return None
+
+    # [PASO 3] NUEVO: AUTO (tema 21). Su tipo real se fija al terminar de compilarla.
+    @_('AUTO FUNCTION ID')
+    def nombre_auto(self, p):
+        self.gen.iniciar_funcion(p.ID, AUTO, self._linea(p))
+        return None
+
+    # [PASO 3] NUEVO: se reduce al leer el ")" de los parámetros, antes del cuerpo.
+    @_('nombre_funcion "(" lista_parametros ")"')
+    def encabezado_funcion(self, p):
+        self._encabezado(p.lista_parametros, self._linea(p))
+        return None
+
+    @_('nombre_auto "(" lista_parametros ")"')
+    def encabezado_auto(self, p):
+        self._encabezado(p.lista_parametros, self._linea(p))
+        return None
+
+    # [PASO 3] NUEVO (no es regla): lógica común de los dos encabezados.
+    def _encabezado(self, parametros, linea):
+        # CORRECCIÓN pedida: antes el parser admitía funciones sin parámetros; ahora se
+        # exige al menos uno. Se informa y se sigue (la función queda sin parámetros).
+        if not parametros:
+            self.gen.errores.sintactico(linea, "la función debe declarar al menos un parámetro.")
+        self.gen.declarar_parametros(parametros, linea)
+
+    # [PASO 3] CAMBIO: antes devolvía {'tipo': 'DECLARACION_FUNCION', ...} (tipada y VOID).
+    @_('encabezado_funcion bloque_declarativo bloque_obligatorio ";"')
     def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'VOID',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+        self.gen.finalizar_funcion()        # RET por defecto + cierra estructura y ámbito
+        return None
+
+    # [PASO 3] CAMBIO: antes devolvía un dict con 'expresion_retorno'. 'bloque_auto' vale
+    # False cuando el cuerpo no termina con ret (ver más abajo).
+    @_('encabezado_auto bloque_declarativo bloque_auto ";"')
+    def declaracion_funcion(self, p):
+        if not p.bloque_auto:
+            self.gen.falta_retorno()
+        self.gen.finalizar_funcion()        # fija el tipo AUTO + cierra estructura y ámbito
+        return None
 
     @_('CLASS ID BEGIN miembros_clase END ";"')
     def declaracion_clase(self, p):
@@ -337,19 +394,22 @@ class AnalizadorSintactico(Parser):
     def sentencia(self, p):
         return p[0]
 
+    # [PASO 3] CAMBIO: antes devolvían {'cuerpo': ..., 'retorno': ...}. El ret ya generó su
+    # terceto en 'sentencia_retorno'; ahora devuelven True = "el cuerpo termina con ret".
     @_('BEGIN sentencias_no_retorno sentencia_retorno ";" END')
     def bloque_auto(self, p):
-        return {
-            'cuerpo': p.sentencias_no_retorno + [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+        return True
 
     @_('BEGIN sentencia_retorno ";" END')
     def bloque_auto(self, p):
-        return {
-            'cuerpo': [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+        return True
+
+    # [PASO 3] NUEVO (corrección pedida): cuerpo AUTO sin retorno. Antes el parser informaba
+    # "símbolo inesperado 'end'". Ahora la regla acepta ese cuerpo, devuelve False y
+    # declaracion_funcion informa claramente la falta de retorno.
+    @_('BEGIN sentencias_no_retorno END')
+    def bloque_auto(self, p):
+        return False
 
     # ------------------------------------------------------------------
     # [PASO 2] IF / WHILE migrados a tercetos.
@@ -493,11 +553,10 @@ class AnalizadorSintactico(Parser):
 
     @_('RET "(" expresion ")"')
     def sentencia_retorno(self, p):
-        # [PASO 1] SIN CAMBIOS en la forma (se migra en el PASO 3); 'expresion' ya es un Operando.
-        return {
-            'tipo': 'RETORNO',
-            'expresion': p.expresion
-        }
+        # [PASO 3] CAMBIO: antes devolvía {'tipo': 'RETORNO', ...}. Ahora genera (RET, expr, -),
+        # chequea el tipo contra el de la función (o lo acumula si es AUTO) y devuelve None.
+        self.gen.retorno(p.expresion, self._linea(p))
+        return None
 
     @_('POUT "(" TEXT_STRING ")"')
     def salida(self, p):
@@ -513,19 +572,15 @@ class AnalizadorSintactico(Parser):
 
     @_('ID "(" lista_expresiones ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': p.lista_expresiones,
-        }
+        # [PASO 3] CAMBIO: antes devolvía {'tipo': 'INVOCACION_FUNCION', ...}. Ahora chequea
+        # (existe, es función, cantidad y tipos de parámetros), genera la copia de cada real
+        # sobre su formal y el terceto CALL. Devuelve un Operando (el CALL) o ERR.
+        return self.gen.invocacion(p.ID, p.lista_expresiones, self._linea(p))
 
     @_('ID "(" ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': []
-        }
+        # [PASO 3] CAMBIO: igual que arriba, sin argumentos.
+        return self.gen.invocacion(p.ID, [], self._linea(p))
 
     @_('ID DOT ID "(" lista_expresiones ")"')
     def invocacion_metodo_objeto(self, p):
@@ -606,8 +661,9 @@ class AnalizadorSintactico(Parser):
 
     @_('invocacion_funcion')
     def factor(self, p):
-        # [PASO 1] TEMPORAL: se migra en el PASO 3. Se devuelve ERR (no el dict).
-        return ERR
+        # [PASO 3] CAMBIO: antes devolvía ERR (temporal). Ahora el valor de la invocación es
+        # el terceto CALL; si la función es VOID se informa que no puede usarse en una expresión.
+        return self.gen.valor_invocacion(p.invocacion_funcion)
 
     @_('invocacion_metodo_objeto')
     def factor(self, p):
@@ -678,42 +734,26 @@ class AnalizadorSintactico(Parser):
         print('ERROR: falta ";" al final de la sentencia ejecutable')
         return [p.sentencia]
 
-    @_('tipo_dato FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': p.tipo_dato,
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    # [PASO 3] CAMBIO: los errores de "falta el nombre de la función" pasaron a los marcadores
+    # (antes eran 3 reglas de declaración completa que devolvían dicts). La función se declara
+    # con un nombre generado (sin_nombre_N) para poder seguir compilando su cuerpo y su ámbito.
+    @_('tipo_dato FUNCTION error')
+    def nombre_funcion(self, p):
+        print(f'ERROR (Línea {self._linea(p)}): falta el nombre de la funcion')
+        self.gen.iniciar_funcion(None, p.tipo_dato, self._linea(p), sin_nombre=True)
+        return None
 
-    @_('AUTO FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_auto ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'AUTO',
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_auto['cuerpo'],
-            'expresion_retorno': p.bloque_auto['retorno']
-        }
+    @_('FUNCTION error')
+    def nombre_funcion(self, p):
+        print(f'ERROR (Línea {self._linea(p)}): falta el nombre de la funcion')
+        self.gen.iniciar_funcion(None, VOID, self._linea(p), sin_nombre=True)
+        return None
 
-    @_('FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'VOID',
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    @_('AUTO FUNCTION error')
+    def nombre_auto(self, p):
+        print(f'ERROR (Línea {self._linea(p)}): falta el nombre de la funcion')
+        self.gen.iniciar_funcion(None, AUTO, self._linea(p), sin_nombre=True)
+        return None
 
     @_('tipo_dato error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
     def declaracion_metodo(self, p):
@@ -823,19 +863,24 @@ class AnalizadorSintactico(Parser):
 
 
 if __name__ == '__main__':
-    # [PASO 1] CAMBIO: ahora hay que armar toda la infraestructura del TP3 y pasársela
-    # al parser. Se usa TablaSimbolosSemantica (tu TablaSimbolos + tipo/uso/ámbito).
-    ts = TablaSimbolosSemantica()
-    errores = Errores()
-    ambitos = GestorAmbitos(ts, errores)
-    gen = GeneradorCodigo(ts, errores, ambitos)
+    # [PASO 3] CAMBIO: los programas de prueba se ejecutan con una función auxiliar, cada uno
+    # con su propia TS / errores / generador (antes eran bloques repetidos).
+    # Los tests solo usan construcciones ya migradas, así que se apaga el pseudo-árbol.
+    MOSTRAR_AST = False
 
-    lexer = AnalizadorLexico(ts)
-    parser = AnalizadorSintactico(ts, gen)
+    def compilar(titulo, codigo):
+        ts = TablaSimbolosSemantica()
+        errores = Errores()
+        gen = GeneradorCodigo(ts, errores, GestorAmbitos(ts, errores))
+        print("\n" + "#" * 8 + f" {titulo} " + "#" * 8)
+        AnalizadorSintactico(ts, gen).parse(AnalizadorLexico(ts).tokenize(codigo))
+        gen.imprimir()
+        print('Saltos sin completar (debe ser []):', gen.control_pendiente())
+        errores.imprimir()
+        return ts
 
-    # [PASO 1] CAMBIO: programa de prueba reducido a lo ya migrado (sin funciones,
-    # clases, IF ni WHILE). Los comentarios indican lo esperado.
-    codigo_prueba_paso1 = '''
+    # ---------------- PASO 1 y 2: expresiones, asignaciones, IF, WHILE ----------------
+    ts = compilar("PASO 1 y 2: expresiones, IF, WHILE", '''
     prueba_paso1
     UINTEGER a, b, c;
     DOUBLEF x, y;
@@ -879,14 +924,10 @@ if __name__ == '__main__':
         a := -b;
         z := 1$ui;
     END
-    '''
-    parser.parse(lexer.tokenize(codigo_prueba_paso1))
+    ''')
 
-    # [PASO 2 - REVISIÓN] segundo programa: errores SINTÁCTICOS en IF/WHILE.
-    # Lo importante: el parser debe seguir, y al final 'Saltos sin completar' debe ser [].
-    ts2 = TablaSimbolosSemantica(); er2 = Errores()
-    gen2 = GeneradorCodigo(ts2, er2, GestorAmbitos(ts2, er2))
-    codigo_errores_paso2 = '''
+    # ---------------- PASO 2 (revisión): errores SINTÁCTICOS en IF/WHILE ----------------
+    compilar("PASO 2: errores sintácticos en IF/WHILE", '''
     prueba_errores
     UINTEGER a, b;
     BEGIN
@@ -900,15 +941,110 @@ if __name__ == '__main__':
             a := a + 1$ui;      {{ falta repeat }}
         pout(a);
     END
-    '''
-    print("\n######## PRUEBA DE ERRORES SINTÁCTICOS (PASO 2) ########")
-    AnalizadorSintactico(ts2, gen2).parse(AnalizadorLexico(ts2).tokenize(codigo_errores_paso2))
-    gen2.imprimir()
-    print('Saltos sin completar (debe ser []):', gen2.control_pendiente())
-    print("######## FIN PRUEBA DE ERRORES ########\n")
+    ''')
 
-    # [PASO 1] NUEVO: salidas pedidas por el TP3 (código intermedio, errores, TS).
-    gen.imprimir()
-    print('Saltos sin completar (debe ser []):', gen.control_pendiente())
-    errores.imprimir()
-    ts.imprimir_tabla()
+    # ---------------- PASO 3: funciones, invocaciones, ret, AUTO ----------------
+    ts3 = compilar("PASO 3: funciones, invocaciones, ret, AUTO", '''
+    prueba_paso3
+    UINTEGER a, b;
+    DOUBLEF x;
+
+    UINTEGER FUNCTION suma(UINTEGER p, UINTEGER q)
+        UINTEGER r;
+    BEGIN
+        r := p + q;
+        ret(r);
+    END;
+
+    DOUBLEF FUNCTION mitad(DOUBLEF v)
+    BEGIN
+        ret(v / 2.0);
+    END;
+
+    FUNCTION informar(UINTEGER n)
+    BEGIN
+        pout({valor:});
+        pout(n);
+    END;
+
+    {{ AUTO: retornos de tipos distintos -> el tipo es el mas abarcativo (DOUBLEF) }}
+    AUTO FUNCTION elegir(UINTEGER n)
+    BEGIN
+        if (n > 0$ui)
+            ret(1.5);
+        end_if;
+        ret(n);
+    END;
+
+    {{ funcion anidada: interna solo es visible dentro de externa }}
+    UINTEGER FUNCTION externa(UINTEGER y)
+        UINTEGER FUNCTION interna(UINTEGER y)
+        BEGIN
+            ret(y + 1$ui);
+        END;
+    BEGIN
+        ret(interna(y));
+    END;
+
+    BEGIN
+        a := suma(1$ui, 2$ui);
+        informar(a);
+        x := mitad(5.0);
+        x := elegir(a);
+        b := externa(a) + suma(a, 1$ui);
+        b := toui(mitad(4.0));
+
+        {{ ---- errores esperados ---- }}
+        a := suma(1$ui);
+        a := suma(1.5, 2$ui);
+        a := informar(1$ui);
+        a := interna(1$ui);
+        a := a(1$ui);
+        a := suma;
+        ret(1$ui);
+    END
+    ''')
+
+    # ---------------- PASO 3: errores en la DECLARACIÓN de funciones ----------------
+    compilar("PASO 3: errores en declaraciones de funciones", '''
+    prueba_errores_funciones
+    UINTEGER a;
+
+    UINTEGER FUNCTION sinparam()
+    BEGIN
+        ret(1$ui);
+    END;
+
+    UINTEGER FUNCTION devuelve_mal(UINTEGER p)
+    BEGIN
+        ret(1.5);
+    END;
+
+    FUNCTION con_ret(UINTEGER p)
+    BEGIN
+        ret(p);
+    END;
+
+    AUTO FUNCTION sin_retorno(UINTEGER p)
+    BEGIN
+        pout(p);
+    END;
+
+    UINTEGER FUNCTION f(UINTEGER p)
+    BEGIN
+        ret(p);
+    END;
+
+    UINTEGER FUNCTION f(UINTEGER p)
+    BEGIN
+        ret(p);
+    END;
+
+    BEGIN
+        a := f(1$ui);
+        a := sin_retorno(1$ui);
+    END
+    ''')
+
+    # TABLA DE SÍMBOLOS del programa de funciones
+    ts3.imprimir_tabla()
