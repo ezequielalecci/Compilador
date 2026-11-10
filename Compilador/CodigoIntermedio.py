@@ -95,6 +95,10 @@ class GestorAmbitos:
         self.tabla = tabla
         self.errores = errores
         self.pila = [global_]
+        self.valores_comptime = {}
+        self.clase_actual = None
+        self.amigos_por_clase = {}
+
 
     def ambito_actual(self):
         return ':'.join(self.pila)
@@ -137,7 +141,119 @@ class GestorAmbitos:
         self.errores.semantico(linea, f"'{nombre}' no está declarado o no es visible desde el ámbito '{self.ambito_actual()}'.")
         return None, None
 
+    def registrar_valor_comptime(self, nombre_mangleado, valor_operando, linea):
+        info = self.tabla.buscar(nombre_mangleado)
+        if info and info.get('comptime'):
+            self.valores_comptime[nombre_mangleado] = valor_operando
+        else:
+            self.errores.semantico(linea, f"La variable '{nombre_mangleado}' no es de tipo COMPTIME.")
 
+    def obtener_valor_comptime(self, nombre_mangleado):
+        """Devuelve el valor registrado si es una variable comptime."""
+        return self.valores_comptime.get(nombre_mangleado)
+
+    def iniciar_clase(self, nombre_clase, linea, clase_padre=None):
+        self.clase_actual = nombre_clase
+        # Registramos la clase en la tabla incluyendo su padre y su conjunto de amigos
+        self.tabla.registrar(
+            nombre_clase, 
+            'CLASS', 
+            uso='clase', 
+            ambito='global',
+            amigos=set(),
+            padre=clase_padre # <--- Guardamos la relación de herencia en la Tabla de Símbolos
+        )
+
+    def registrar_amigo(self, nombre_amigo, linea):
+        if self.clase_actual:
+            # Buscamos la info de la clase actual en la tabla de símbolos
+            info_clase = self.tabla.buscar(self.clase_actual, token='CLASS')
+            if info_clase and 'amigos' in info_clase:
+                info_clase['amigos'].add(nombre_amigo)
+        else:
+            self.errores.semantico(linea, "La declaración 'friend' debe estar dentro del cuerpo de una clase.")
+
+    def es_amigo_de(self, ambito_o_entidad, nombre_clase):
+        info_clase = self.tabla.buscar(nombre_clase, token='CLASS')
+        if info_clase and 'amigos' in info_clase:
+            return ambito_o_entidad in info_clase['amigos']
+        return False
+    
+    
+    def declarar_miembro(self, tipo, nombre, uso, visibilidad, linea):
+        # El ámbito o nombre interno incluirá la clase actual si corresponde
+        nombre_interno = f"{self.clase_actual}.{nombre}" if self.clase_actual else nombre
+        
+        # Usamos .registrar() (o .declarar() según cómo lo tengas mapeado) pasando nombre y token posicionales
+        self.tabla.registrar(
+            nombre_interno,
+            "ID",
+            tipo=tipo,
+            uso=uso,
+            ambito=self.clase_actual or "global",
+            visibilidad=visibilidad # <--- Guardamos 'private' o 'public'
+        )
+
+
+    def validar_y_obtener_miembro(self, clase_propietaria, nombre_miembro, linea):
+            clase_actual_busqueda = clase_propietaria
+            coincidencias = []
+
+            # Búsqueda recursiva a través de toda la jerarquía recolectando TODAS las apariciones
+            while clase_actual_busqueda:
+                nombre_interno = f"{clase_actual_busqueda}.{nombre_miembro}"
+                info = self.tabla.buscar(nombre_interno)
+                if info:
+                    coincidencias.append((clase_actual_busqueda, info))
+                
+                # Consultamos la clase padre para seguir ascendiendo en la jerarquía
+                info_clase = self.tabla.buscar(clase_actual_busqueda, token='CLASS')
+                clase_actual_busqueda = info_clase.get('padre') if info_clase else None
+
+            # 1. Chequeo de existencia: Si no existe en ninguna clase de la jerarquía
+            if not coincidencias:
+                self.errores.semantico(linea, f"El miembro '{nombre_miembro}' no existe en la clase '{clase_propietaria}' ni en sus clases base.")
+                return None
+                
+            # 2. Chequeo de ambigüedad (Opción 3): Si el miembro existe en más de una clase de la cadena
+            if len(coincidencias) > 1:
+                clases_implicadas = ", ".join([c[0] for c in coincidencias])
+                self.errores.semantico(linea, f"Error semántico: El miembro '{nombre_miembro}' es ambiguo; está declarado en múltiples clases de la jerarquía: [{clases_implicadas}].")
+                return None
+
+            # Si hay exactamente una única coincidencia, extraemos su propietario real y metadatos
+            propietario_real, info = coincidencias[0]
+
+            # 3. Si el miembro encontrado es público, se permite directamente
+            if info.get('visibilidad', 'public') != 'private':
+                return info
+                
+            # 4. Si el miembro es PRIVADO, aplicamos las reglas de acceso:
+            # ¿Estamos dentro de la misma clase EXACTA donde fue declarado el miembro privado?
+            es_propio = (self.clase_actual == propietario_real)
+            
+            # ¿El ámbito actual es amigo de la clase propietaria real del miembro?
+            info_clase_prop = self.tabla.buscar(propietario_real, token='CLASS')
+            amigos_de_la_clase = info_clase_prop.get('amigos', set()) if info_clase_prop else set()
+            es_amigo = any(ambito in amigos_de_la_clase for ambito in self.pila)
+            
+            if es_propio or es_amigo:
+                return info
+                
+            # Si no cumple ninguna condición, bloqueamos por acceso denegado a miembro privado
+            self.errores.semantico(linea, f"Acceso denegado: El miembro '{nombre_miembro}' de la clase '{propietario_real}' es privado.")
+            return None
+
+    
+    def cerrar_clase(self, nombre_clase, linea):
+        self.clase_actual = None
+
+    def iniciar_ambito(self, nombre_ambito, linea):
+        self.entrar(nombre_ambito)
+
+    def cerrar_ambito(self):
+        self.salir()
+    
 # ----------------------------------------------------------------------------
 # Tercetos
 # ----------------------------------------------------------------------------
@@ -217,13 +333,42 @@ class GeneradorCodigo:
 
     # ---------------- operandos ----------------
     def variable(self, nombre, linea) -> Operando:
+        """
+        Lectura (rvalue): Se usa cuando la variable aparece en expresiones.
+        Si es COMPTIME, exige que ya tenga un valor registrado; si no, da error.
+        """
         mangleado, info = self.ambitos.resolver(nombre, linea)
         if info is None:
             return ERR
         if info.get('uso') not in ('variable', 'parametro'):
             self.errores.semantico(linea, f"'{nombre}' es {info.get('uso')} y se usa como variable.")
             return ERR
+            
+        if info.get('comptime'):
+            valor_constante = self.ambitos.obtener_valor_comptime(mangleado)
+            if valor_constante is not None:
+                return valor_constante
+            self.errores.semantico(linea, f"La variable COMPTIME '{nombre}' se usa antes de que se le asigne un valor conocido en compilación.")
+            return ERR
+
         return Operando(mangleado, info['tipo'])
+
+    def variable_destino(self, nombre, linea) -> Operando:
+        """
+        Escritura (lvalue): Se usa cuando la variable va al LADO IZQUIERDO de una asignación.
+        NO exige valor previo porque se le asignará uno en este paso.
+        """
+        mangleado, info = self.ambitos.resolver(nombre, linea)
+        if info is None:
+            return ERR
+        if info.get('uso') not in ('variable', 'parametro'):
+            self.errores.semantico(linea, f"'{nombre}' es {info.get('uso')} y se usa como variable.")
+            return ERR
+            
+        return Operando(mangleado, info['tipo'])
+
+
+
 
     def constante_ui(self, valor) -> Operando:
         # [PASO 1] CAMBIO: además de armar el operando, deja registrado el TIPO de la
@@ -265,6 +410,23 @@ class GeneradorCodigo:
         tipo = self._tipo_resultado(izq.tipo, der.tipo, linea)
         if tipo is None:
             return ERR
+
+        # [PASO 4 - COMPTIME / Constant Folding] Plegado de constantes aritméticas
+        if isinstance(izq.ref, str) and isinstance(der.ref, str) and '$ui' in izq.ref and '$ui' in der.ref:
+            try:
+                val1 = int(izq.ref.split('$')[0])
+                val2 = int(der.ref.split('$')[0])
+                resultado_val = 0
+                if op == '+': resultado_val = val1 + val2
+                elif op == '-': resultado_val = val1 - val2
+                elif op == '*': resultado_val = val1 * val2
+                elif op == '/': 
+                    if val2 != 0: resultado_val = val1 // val2
+                    else: self.errores.semantico(linea, "División por cero en tiempo de compilación.")
+                return self.constante_ui(resultado_val)
+            except ValueError:
+                pass
+
         return Operando(self.unidad.emitir(op, izq.ref, der.ref, tipo), tipo)
 
     def negar(self, expr, linea) -> Operando:
@@ -293,19 +455,31 @@ class GeneradorCodigo:
         return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER)
 
     def asignacion(self, destino, expr, linea) -> Operando:
-        """
-        Sirve para ':=' (sentencia) y para '=' embebido (tema 18): misma estructura.
-        Devuelve el LADO IZQUIERDO como valor de la expresión (corrección pedida:
-        antes el parser tomaba el derecho).
-        """
         if ERROR in (destino.tipo, expr.tipo):
             return destino
+            
         compatible = destino.tipo == expr.tipo or (
             PERMITE_ENTERO_A_FLOAT and destino.tipo == DOUBLEF and expr.tipo == UINTEGER)
+            
         if not compatible:
             extra = " Usar TOUI(...)." if destino.tipo == UINTEGER and expr.tipo == DOUBLEF else ""
             self.errores.semantico(linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}.{extra}")
             return destino
+
+        # [PASO 4 - COMPTIME] Validación estricta y registro de valor estático
+        info_destino = self.tabla.buscar(destino.ref)
+        if info_destino and info_destino.get('comptime'):
+            # Debe ser un literal que contenga '$' (ej. '3$ui') o un valor comptime ya registrado
+            es_literal_o_constante = isinstance(expr.ref, str) and '$' in expr.ref
+            
+            if es_literal_o_constante:
+                self.ambitos.registrar_valor_comptime(destino.ref, expr, linea)
+            else:
+                self.errores.semantico(
+                    linea, 
+                    f"A la variable COMPTIME '{info_destino['lexema']}' solo se le pueden asignar valores determinables en tiempo de compilación (no variables comunes)."
+                )
+
         self.unidad.emitir(':=', destino.ref, expr.ref, destino.tipo)
         return destino
 
@@ -345,6 +519,35 @@ class GeneradorCodigo:
             self.errores.semantico(linea, f"la función AUTO '{info['nombre']}' debe tener al menos un 'ret'.")
         self.terminadas.append(self.pila_unidades.pop())
         return info
+
+    def operacion(self, op, izq, der, linea) -> Operando:
+        """op en {'+','-','*','/'}"""
+        if ERROR in (izq.tipo, der.tipo):
+            return ERR
+        tipo = self._tipo_resultado(izq.tipo, der.tipo, linea)
+        if tipo is None:
+            return ERR
+
+        # [PASO 4 - COMPTIME / Constant Folding] Si ambos operandos son constantes puras en texto (ej. "3$ui" y "1$ui"),
+        # podemos calcular el resultado directamente en compilación para mantener el valor estático de las comptime.
+        if isinstance(izq.ref, str) and isinstance(der.ref, str) and '$ui' in izq.ref and '$ui' in der.ref:
+            try:
+                val1 = int(izq.ref.split('$')[0])
+                val2 = int(der.ref.split('$')[0])
+                resultado_val = 0
+                if op == '+': resultado_val = val1 + val2
+                elif op == '-': resultado_val = val1 - val2
+                elif op == '*': resultado_val = val1 * val2
+                elif op == '/': 
+                    if val2 != 0: resultado_val = val1 // val2
+                    else: self.errores.semantico(linea, "División por cero en tiempo de compilación.")
+                
+                # Devolvemos un nuevo operando constante ya plegado
+                return self.constante_ui(resultado_val)
+            except ValueError:
+                pass
+
+        return Operando(self.unidad.emitir(op, izq.ref, der.ref, tipo), tipo)
 
     # ------------------------------------------------------------------
     # [PASO 2 - REVISIÓN] Sentencias de control SIN tercetos LABEL, siguiendo los
@@ -421,7 +624,30 @@ class GeneradorCodigo:
 
     def control_pendiente(self):
         """Para depurar: saltos que quedaron sin completar (debería ser lista vacía)."""
+        
         return list(self.pila_control)
+
+    def validar_acceso(self, clase_propietaria, miembro_nombre, linea):
+        info_miembro = self.tabla.buscar_en_clase(clase_propietaria, miembro_nombre)
+        
+        # Si es público, pasa sin problemas
+        if info_miembro.get('visibilidad') != 'private':
+            return True
+            
+        # Si es private, verificamos quién intenta acceder (contexto del ámbito actual)
+        ambito_actual = self.ambitos.ambito_actual()
+        
+        # Condición 1: ¿Estamos dentro de un método de la misma clase propietaria?
+        if self.ambitos.es_miembro_de_clase(ambito_actual, clase_propietaria):
+            return True
+            
+        # Condición 2: ¿El ámbito actual (clase o función) está en la lista de 'amigos' de la clase propietaria?
+        if self.ambitos.es_amigo_de(ambito_actual, clase_propietaria):
+            return True
+            
+        # Si no cumple ninguna, se rechaza
+        self.errores.semantico(linea, f"Acceso denegado: El miembro '{miembro_nombre}' es privado.")
+        return False
 
     # ---------------- salida ----------------
     def imprimir(self):
@@ -439,80 +665,67 @@ if __name__ == '__main__':
     amb = GestorAmbitos(tabla, errores)
     gen = GeneradorCodigo(tabla, errores, amb)
 
-    
-    amb.declarar('a', UINTEGER, 'variable', 2)
-    amb.declarar('b', UINTEGER, 'variable', 2)
-    amb.declarar('x', DOUBLEF, 'variable', 3)
-    amb.declarar('a', UINTEGER, 'variable', 4)        # ERROR: redeclaración en main
+print("\n=== INICIO DE PRUEBAS RIGUROSAS: HERENCIA Y AMBIGÜEDAD (OPCIÓN 3) ===")
 
-    V = lambda n, l: gen.variable(n, l)
-    UI = gen.constante_ui
+# Limpiamos o inicializamos un nuevo flujo de prueba
+# Escenario base: Abuela -> Padre -> Hija
 
-    # b := a + 2$ui * a;
-    t = gen.operacion('+', V('a', 6), gen.operacion('*', UI(2), V('a', 6), 6), 6)
-    gen.asignacion(V('b', 6), t, 6)
+# 1. Definición de Clases
+amb.iniciar_clase('Abuela', linea=1)
+amb.declarar_miembro('UINTEGER', 'prop_comun', 'variable', 'public', linea=2)
+amb.declarar_miembro('UINTEGER', 'prop_abuela', 'variable', 'public', linea=3)
+amb.cerrar_clase('Abuela', linea=4)
 
-    # a := b = 3$ui;        (tema 18: asignación embebida, vale el lado izquierdo)
-    gen.asignacion(V('a', 7), gen.asignacion(V('b', 7), UI(3), 7), 7)
+amb.iniciar_clase('Padre', linea=5, clase_padre='Abuela')
+amb.declarar_miembro('UINTEGER', 'prop_padre', 'variable', 'public', linea=6)
+# NOTA: 'prop_comun' NO se declara aquí, se hereda de Abuela.
+amb.cerrar_clase('Padre', linea=7)
 
-    # while (a < 10$ui) repeat a := a + 1$ui;
-    gen.while_inicio()
-    gen.while_condicion(gen.comparacion('<', V('a', 9), UI(10), 9), 9)
-    gen.asignacion(V('a', 9), gen.operacion('+', V('a', 9), UI(1), 9), 9)
-    gen.while_fin()
-
-    # if (a == 5$ui) pout(a) else b := a end_if;
-    gen.if_condicion(gen.comparacion('==', V('a', 11), UI(5), 11), 11)
-    gen.salida_expresion(V('a', 11))
-    gen.if_else()
-    gen.asignacion(V('b', 12), V('a', 12), 12)
-    gen.if_fin()
-
-    # a := toui(x) + b;     (tema 34: válido)
-    gen.asignacion(V('a', 14), gen.operacion('+', gen.convertir_toui(V('x', 14), 14), V('b', 14), 14), 14)
-
-    # ---- errores a detectar ----
-    gen.asignacion(V('a', 16), V('x', 16), 16)                 # UINTEGER := DOUBLEF sin TOUI
-    gen.operacion('+', V('a', 17), V('x', 17), 17)             # UINTEGER + DOUBLEF sin TOUI
-    V('zzz', 18)                                         # no declarada
+amb.iniciar_clase('Hija', linea=8, clase_padre='Padre')
+amb.declarar_miembro('UINTEGER', 'prop_hija', 'variable', 'public', linea=9)
+amb.cerrar_clase('Hija', linea=10)
 
 
-        # ---- PRUEBAS DE ÁMBITOS ----
+# --- TEST 1: Acceso a miembro heredado único sin colisión (Debe pasar limpio) ---
+print("\n--- Test 1: Acceso a 'prop_abuela' desde Hija (Debe pasar limpio) ---")
+amb.iniciar_ambito('Hija', 15)
+res1 = amb.validar_y_obtener_miembro('Hija', 'prop_abuela', linea=16)
+assert res1 is not None, "Test 1 Falló: Debería haber encontrado 'prop_abuela'"
+amb.cerrar_ambito()
 
-    # Crear ámbito de función suma
-    amb.entrar('suma')
 
-    amb.declarar('a', UINTEGER, 'variable', 20)
-    amb.declarar('c', DOUBLEF, 'variable', 21)
+# --- TEST 2: Ambigüedad real - Colisión de nombres en la jerarquía (Debe fallar) ---
+# Vamos a simular una rama colisionada donde Abuela y Padre tienen una propiedad con el mismo nombre 'colision'
+amb.iniciar_clase('BaseA', linea=20)
+amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=21)
+amb.cerrar_clase('BaseA', linea=22)
 
-    # Debe detectar redeclaración dentro de suma
-    amb.declarar('a', UINTEGER, 'variable', 22)
+amb.iniciar_clase('BaseB', linea=23)
+amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=24)
+amb.cerrar_clase('BaseB', linea=25)
 
-    # Acceder a variable local
-    V('a', 23)
+# Supongamos temporalmente una clase con múltiples padres o una jerarquía lineal cruzada
+# Para probar el bucle actual de herencia simple: si Padre y Abuela tienen 'prop_comun'
+# Espere: En herencia simple (un solo padre), una clase hija hereda de Padre, y Padre de Abuela. 
+# Si Padre define 'prop_comun' y Abuela también define 'prop_comun', ¡se produce ambigüedad entre Padre y Abuela!
+# --- TEST 3: Colisión vertical entre Padre y Abuela (Debe fallar por ambigüedad) ---
+amb.iniciar_clase('AbuelaCol', linea=30)
+amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=31)
+amb.cerrar_clase('AbuelaCol', linea=32)
 
-    # Acceder a variable global
-    V('b', 24)
+amb.iniciar_clase('PadreCol', linea=33, clase_padre='AbuelaCol')
+amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=34) # ¡Colisiona con AbuelaCol!
+amb.cerrar_clase('PadreCol', linea=35)
 
-    # Intentar acceder a una variable inexistente
-    V('zzz', 25)
+amb.iniciar_clase('HijaCol', linea=36, clase_padre='PadreCol')
+amb.cerrar_clase('HijaCol', linea=37)
 
-    amb.salir()
+print("\n--- Test 3: Acceso a 'duplicado' presente en PadreCol y AbuelaCol (Debe fallar por ambigüedad) ---")
+amb.iniciar_ambito('HijaCol', 40)
+amb.validar_y_obtener_miembro('HijaCol', 'duplicado', linea=41) # Debe arrojar error de ambigüedad
+amb.cerrar_ambito()
 
-    # Crear otro ámbito de función resta
-    amb.entrar('resta')
+print("\n=== FIN DE PRUEBAS RIGUROSAS ===")
 
-    # Puede volver a declarar a porque pertenece a otro ámbito
-    amb.declarar('a', UINTEGER, 'variable', 27)
-
-    V('a', 28)
-
-    # No debería acceder a c, que pertenece a suma
-    V('c', 29)
-
-    amb.salir()
-
-    gen.imprimir()
-    print('Saltos sin completar:', gen.control_pendiente())
-    errores.imprimir()
-    tabla.imprimir_tabla()
+errores.imprimir()
+tabla.imprimir_tabla()

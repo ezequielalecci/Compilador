@@ -472,25 +472,50 @@ class AnalizadorSintactico(Parser):
         # no terminales, entonces no puede pedir p.lineno; la línea la aporta este token.
         return (p[0], p.lineno)
 
+    """""
     @_('ref_variable TWO_POINTS_ASSING expresion')
     def asignacion(self, p):
         # [PASO 1] CAMBIO: antes devolvía {'tipo': 'ASIGNACION', ...}. Ahora genera el
         # terceto (:=, destino, expr) con chequeo de tipos y no devuelve nada (None).
         self.gen.asignacion(p.ref_variable, p.expresion, self._linea(p))
         return None
+    """""
 
+    """""
     @_('ID DOT ID')
     def ref_variable(self, p):
         # [PASO 1] TEMPORAL: el acceso a atributos se migra en el PASO 5. Se devuelve ERR
         # para que las expresiones que lo usen no generen errores en cascada.
         return ERR
+    """""
+
+    @_('destino_asignacion TWO_POINTS_ASSING expresion')
+    def asignacion(self, p):
+        # Usa el destino de escritura (lvalue), evitando el error de lectura previa en COMPTIME
+        self.gen.asignacion(p.destino_asignacion, p.expresion, self._linea(p))
+        return None
 
     @_('ID')
+    def destino_asignacion(self, p):
+        # ID simple a la izquierda de una asignación
+        return self.gen.variable_destino(p.ID, self._linea(p))
+
+    @_('ref_variable DOT ID')
+    def destino_asignacion(self, p):
+        # Para cuando asignes a un atributo de objeto en el Paso 5 (ej. obj.atributo := expr)
+        # Aquí puedes usar tu lógica de acceso con punto como destino
+        return self.gen.acceso_miembro_punto_destino(p.ref_variable, p.ID, self._linea(p)) # O adaptarlo según corresponda
+    
+    @_('ID')
     def ref_variable(self, p):
-        # [PASO 1] CAMBIO: antes devolvía {'tipo': 'VARIABLE', ...}. Ahora resuelve el
-        # nombre en la TS (visibilidad, uso, tipo) y devuelve un Operando con el nombre
-        # mangleado (ej. 'a:main').
+        # Lectura normal (rvalue)
         return self.gen.variable(p.ID, self._linea(p))
+
+    @_('ref_variable DOT ID')
+    def ref_variable(self, p):
+        # Lectura de atributos de objetos (Paso 5)
+        return self.gen.acceso_miembro_punto(p.ref_variable, p.ID, self._linea(p))
+    
 
     @_('RET "(" expresion ")"')
     def sentencia_retorno(self, p):
@@ -815,6 +840,41 @@ class AnalizadorSintactico(Parser):
         print('ERROR: falta "end_if" en la sentencia if')
         self.gen.if_fin()
         return None
+
+
+    @_('CLASS ID BEGIN cuerpo_clase END')
+    def declaracion_clase(self, p):
+        # Finaliza la clase actual en el gestor de ámbitos
+        self.gen.cerrar_clase(p.ID, self._linea(p))
+        return None
+
+    @_('PRIVATE tipo ID SEMICOLON')
+    def atributo_privado(self, p):
+        # Registra el atributo marcándolo explícitamente como private
+        return self.gen.declarar_atributo(p.tipo, p.ID, visibilidad='private', linea=self._linea(p))
+
+    @_('tipo ID SEMICOLON')
+    def atributo_publico(self, p):
+        # Atributo público por defecto
+        return self.gen.declarar_atributo(p.tipo, p.ID, visibilidad='public', linea=self._linea(p))
+
+
+    @_('PRIVATE tipo FUNCTION ID LPAR argumentos RPAR bloque_metodo')
+    def metodo_privado(self, p):
+        return self.gen.declarar_metodo(p.tipo, p.ID, p.argumentos, p.bloque_metodo, visibilidad='private', linea=self._linea(p))
+
+    @_('tipo FUNCTION ID LPAR argumentos RPAR bloque_metodo')
+    def metodo_publico(self, p):
+        return self.gen.declarar_metodo(p.tipo, p.ID, p.argumentos, p.bloque_metodo, visibilidad='public', linea=self._linea(p))
+
+    @_('FRIEND ID SEMICOLON')
+    def declaracion_friend(self, p):
+        # Registra que el ID (puede ser otra clase o una función) es amigo de la clase actual
+        self.gen.registrar_amigo(p.ID, self._linea(p))
+        return None
+
+
+    
 
     def error(self, token):
         if token:
