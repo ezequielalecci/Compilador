@@ -648,7 +648,26 @@ class GeneradorCodigo:
         # Si no cumple ninguna, se rechaza
         self.errores.semantico(linea, f"Acceso denegado: El miembro '{miembro_nombre}' es privado.")
         return False
+    
+    # =========================================================================
+    # PUENTES / DELEGADORES HACIA GESTOR DE ÁMBITOS (PASO 5)
+    # =========================================================================
+    def iniciar_clase(self, nombre_clase, linea, clase_padre=None):
+        return self.ambitos.iniciar_clase(nombre_clase, linea, clase_padre)
 
+    def cerrar_clase(self, nombre_clase, linea):
+        return self.ambitos.cerrar_clase(nombre_clase, linea)
+
+    def declarar_atributo(self, tipo, nombre, visibilidad, linea):
+        return self.ambitos.declarar_miembro(tipo, nombre, 'variable', visibilidad, linea)
+
+    def declarar_metodo(self, tipo, nombre, parametros, declaraciones, cuerpo, visibilidad, linea):
+        # Si los métodos se registran como miembros en el ámbito de la clase:
+        return self.ambitos.declarar_miembro(tipo, nombre, 'funcion', visibilidad, linea)
+
+    def registrar_amigo(self, nombre_amigo, linea):
+        return self.ambitos.registrar_amigo(nombre_amigo, linea)
+    
     # ---------------- salida ----------------
     def imprimir(self):
         for u in self.terminadas:
@@ -665,67 +684,67 @@ if __name__ == '__main__':
     amb = GestorAmbitos(tabla, errores)
     gen = GeneradorCodigo(tabla, errores, amb)
 
-print("\n=== INICIO DE PRUEBAS RIGUROSAS: HERENCIA Y AMBIGÜEDAD (OPCIÓN 3) ===")
+    print("\n=== INICIO DE PRUEBAS RIGUROSAS: HERENCIA Y AMBIGÜEDAD (OPCIÓN 3) ===")
 
-# Limpiamos o inicializamos un nuevo flujo de prueba
-# Escenario base: Abuela -> Padre -> Hija
+    # Limpiamos o inicializamos un nuevo flujo de prueba
+    # Escenario base: Abuela -> Padre -> Hija
 
-# 1. Definición de Clases
-amb.iniciar_clase('Abuela', linea=1)
-amb.declarar_miembro('UINTEGER', 'prop_comun', 'variable', 'public', linea=2)
-amb.declarar_miembro('UINTEGER', 'prop_abuela', 'variable', 'public', linea=3)
-amb.cerrar_clase('Abuela', linea=4)
+    # 1. Definición de Clases
+    amb.iniciar_clase('Abuela', linea=1)
+    amb.declarar_miembro('UINTEGER', 'prop_comun', 'variable', 'public', linea=2)
+    amb.declarar_miembro('UINTEGER', 'prop_abuela', 'variable', 'public', linea=3)
+    amb.cerrar_clase('Abuela', linea=4)
 
-amb.iniciar_clase('Padre', linea=5, clase_padre='Abuela')
-amb.declarar_miembro('UINTEGER', 'prop_padre', 'variable', 'public', linea=6)
-# NOTA: 'prop_comun' NO se declara aquí, se hereda de Abuela.
-amb.cerrar_clase('Padre', linea=7)
+    amb.iniciar_clase('Padre', linea=5, clase_padre='Abuela')
+    amb.declarar_miembro('UINTEGER', 'prop_padre', 'variable', 'public', linea=6)
+    # NOTA: 'prop_comun' NO se declara aquí, se hereda de Abuela.
+    amb.cerrar_clase('Padre', linea=7)
 
-amb.iniciar_clase('Hija', linea=8, clase_padre='Padre')
-amb.declarar_miembro('UINTEGER', 'prop_hija', 'variable', 'public', linea=9)
-amb.cerrar_clase('Hija', linea=10)
-
-
-# --- TEST 1: Acceso a miembro heredado único sin colisión (Debe pasar limpio) ---
-print("\n--- Test 1: Acceso a 'prop_abuela' desde Hija (Debe pasar limpio) ---")
-amb.iniciar_ambito('Hija', 15)
-res1 = amb.validar_y_obtener_miembro('Hija', 'prop_abuela', linea=16)
-assert res1 is not None, "Test 1 Falló: Debería haber encontrado 'prop_abuela'"
-amb.cerrar_ambito()
+    amb.iniciar_clase('Hija', linea=8, clase_padre='Padre')
+    amb.declarar_miembro('UINTEGER', 'prop_hija', 'variable', 'public', linea=9)
+    amb.cerrar_clase('Hija', linea=10)
 
 
-# --- TEST 2: Ambigüedad real - Colisión de nombres en la jerarquía (Debe fallar) ---
-# Vamos a simular una rama colisionada donde Abuela y Padre tienen una propiedad con el mismo nombre 'colision'
-amb.iniciar_clase('BaseA', linea=20)
-amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=21)
-amb.cerrar_clase('BaseA', linea=22)
+    # --- TEST 1: Acceso a miembro heredado único sin colisión (Debe pasar limpio) ---
+    print("\n--- Test 1: Acceso a 'prop_abuela' desde Hija (Debe pasar limpio) ---")
+    amb.iniciar_ambito('Hija', 15)
+    res1 = amb.validar_y_obtener_miembro('Hija', 'prop_abuela', linea=16)
+    assert res1 is not None, "Test 1 Falló: Debería haber encontrado 'prop_abuela'"
+    amb.cerrar_ambito()
 
-amb.iniciar_clase('BaseB', linea=23)
-amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=24)
-amb.cerrar_clase('BaseB', linea=25)
 
-# Supongamos temporalmente una clase con múltiples padres o una jerarquía lineal cruzada
-# Para probar el bucle actual de herencia simple: si Padre y Abuela tienen 'prop_comun'
-# Espere: En herencia simple (un solo padre), una clase hija hereda de Padre, y Padre de Abuela. 
-# Si Padre define 'prop_comun' y Abuela también define 'prop_comun', ¡se produce ambigüedad entre Padre y Abuela!
-# --- TEST 3: Colisión vertical entre Padre y Abuela (Debe fallar por ambigüedad) ---
-amb.iniciar_clase('AbuelaCol', linea=30)
-amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=31)
-amb.cerrar_clase('AbuelaCol', linea=32)
+    # --- TEST 2: Ambigüedad real - Colisión de nombres en la jerarquía (Debe fallar) ---
+    # Vamos a simular una rama colisionada donde Abuela y Padre tienen una propiedad con el mismo nombre 'colision'
+    amb.iniciar_clase('BaseA', linea=20)
+    amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=21)
+    amb.cerrar_clase('BaseA', linea=22)
 
-amb.iniciar_clase('PadreCol', linea=33, clase_padre='AbuelaCol')
-amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=34) # ¡Colisiona con AbuelaCol!
-amb.cerrar_clase('PadreCol', linea=35)
+    amb.iniciar_clase('BaseB', linea=23)
+    amb.declarar_miembro('UINTEGER', 'colision', 'variable', 'public', linea=24)
+    amb.cerrar_clase('BaseB', linea=25)
 
-amb.iniciar_clase('HijaCol', linea=36, clase_padre='PadreCol')
-amb.cerrar_clase('HijaCol', linea=37)
+    # Supongamos temporalmente una clase con múltiples padres o una jerarquía lineal cruzada
+    # Para probar el bucle actual de herencia simple: si Padre y Abuela tienen 'prop_comun'
+    # Espere: En herencia simple (un solo padre), una clase hija hereda de Padre, y Padre de Abuela. 
+    # Si Padre define 'prop_comun' y Abuela también define 'prop_comun', ¡se produce ambigüedad entre Padre y Abuela!
+    # --- TEST 3: Colisión vertical entre Padre y Abuela (Debe fallar por ambigüedad) ---
+    amb.iniciar_clase('AbuelaCol', linea=30)
+    amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=31)
+    amb.cerrar_clase('AbuelaCol', linea=32)
 
-print("\n--- Test 3: Acceso a 'duplicado' presente en PadreCol y AbuelaCol (Debe fallar por ambigüedad) ---")
-amb.iniciar_ambito('HijaCol', 40)
-amb.validar_y_obtener_miembro('HijaCol', 'duplicado', linea=41) # Debe arrojar error de ambigüedad
-amb.cerrar_ambito()
+    amb.iniciar_clase('PadreCol', linea=33, clase_padre='AbuelaCol')
+    amb.declarar_miembro('UINTEGER', 'duplicado', 'variable', 'public', linea=34) # ¡Colisiona con AbuelaCol!
+    amb.cerrar_clase('PadreCol', linea=35)
 
-print("\n=== FIN DE PRUEBAS RIGUROSAS ===")
+    amb.iniciar_clase('HijaCol', linea=36, clase_padre='PadreCol')
+    amb.cerrar_clase('HijaCol', linea=37)
 
-errores.imprimir()
-tabla.imprimir_tabla()
+    print("\n--- Test 3: Acceso a 'duplicado' presente en PadreCol y AbuelaCol (Debe fallar por ambigüedad) ---")
+    amb.iniciar_ambito('HijaCol', 40)
+    amb.validar_y_obtener_miembro('HijaCol', 'duplicado', linea=41) # Debe arrojar error de ambigüedad
+    amb.cerrar_ambito()
+
+    print("\n=== FIN DE PRUEBAS RIGUROSAS ===")
+
+    errores.imprimir()
+    tabla.imprimir_tabla()

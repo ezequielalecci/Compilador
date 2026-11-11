@@ -12,7 +12,7 @@ class AnalizadorLexico(Lexer):
     tokens = {IF, ELSE, END_IF, BEGIN, END, POUT, RET, CLASS, FUNCTION, DOUBLEF, UINTEGER,
               ID, CONST_UI, PLUS, MINUS, TIMES, DIVIDE, TWO_POINTS_ASSING, ASSIGN,
               LESS, LESS_EQUAL, GREATER, GREATER_EQUAL, EQUALS_EQUALS, NOT_EQUALS,
-              TEXT_STRING, DOT, WHILE, REPEAT, AUTO, COMPTIME, FRIEND, PRIVATE, TOUI}
+              TEXT_STRING, DOT, WHILE, REPEAT, AUTO, COMPTIME, FRIEND, PRIVATE, TOUI, EXTENDS}
 
     literals = {'(', ')', ',', ';'}
 
@@ -22,7 +22,7 @@ class AnalizadorLexico(Lexer):
         'FUNCTION': 'FUNCTION', 'DOUBLEF': 'DOUBLEF', 'REPEAT': 'REPEAT',
         'WHILE': 'WHILE', 'AUTO': 'AUTO', 'COMPTIME': 'COMPTIME',
         'FRIEND': 'FRIEND', 'PRIVATE': 'PRIVATE', 'TOUI': 'TOUI',
-        'UINTEGER': 'UINTEGER'
+        'UINTEGER': 'UINTEGER', 'EXTENDS':'EXTENDS'
     }
 
     ignore = ' \t'
