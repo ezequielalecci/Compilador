@@ -1,64 +1,44 @@
 """
-AnalizadorSintactico.py  -  TP2 -> TP3  (Grupo 19)
+SintacticoRemasterizado.py  -  TP2 -> TP3 -> TP4  (Grupo 19)
 
 =====================================================================================
-REGISTRO DE CAMBIOS  (todo lo modificado respecto de la versión del TP2 lleva la
-marca  [PASO n]  en un comentario, para poder buscarlo con Ctrl+F)
+REGISTRO DE CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR (marcados con [PASO 3] / [PASO 5])
 =====================================================================================
-OBJETIVO DE LA MIGRACIÓN: pasar de "reglas que arman un pseudo-árbol (diccionarios)"
-a "reglas que generan tercetos" llamando al GeneradorCodigo de codigo_intermedio.py.
-Se hace de a poco: lo migrado devuelve Operando (expresiones) o None (sentencias ya
-generadas); lo NO migrado sigue devolviendo diccionarios hasta su paso.
-
-[PASO 1]  (este archivo)
-  - Migrado a tercetos : expresiones (+ - * /, signo menos, TOUI, constantes, variables),
-                         asignación ':=', asignación embebida '=' (tema 18), POUT,
-                         declaración de variables en el ámbito global (main).
-  - Sigue como AST     : declaraciones de funciones/clases, condicion, IF, WHILE, RET,
-                         invocaciones, acceso a atributos.   (pasos 2 a 5)
-  - TEMPORAL           : invocaciones y 'ID.ID' devuelven ERR (un Operando de error) para que
-                         no se generen errores en cascada hasta que se migren.
-  - __init__ recibe ahora el GeneradorCodigo.
-  - Las constantes flotantes llegan como el LEXEMA de la TS (ver cambio en el léxico).
-  - Las reglas de error 'expresion PLUS/MINUS error' devuelven ERR en vez de un dict.
-  - MOSTRAR_AST permite apagar la impresión del pseudo-árbol cuando ya no haga falta.
-  - json.dumps usa default=str porque el AST ahora puede contener Operandos.
-
-[PASO 2]
-  - Migrado a tercetos : condicion, IF, IF-ELSE, WHILE ... REPEAT (tema 11).
-  - Nuevos no terminales marcador: inicio_if, rama_else, inicio_while, cabecera_while
-    (SLY no admite acciones a mitad de regla; ver comentarios en las reglas).
-  - Las reglas de error de IF/WHILE se reescribieron sobre esos marcadores. Cada una
-    sigue emitiendo/cerrando los saltos para no desbalancear la pila de control.
-  - 'comparador' devuelve (operador, línea).
-  - CORREGIDO: el mensaje de 'falta ")"' en WHILE decía 'falta "("'.
-  - Ya no se construye ningún dict para IF / WHILE / condicion.
-
-[PASO 2 - REVISIÓN]
-  - Las reglas de error de IF/WHILE seguían escritas en la forma VIEJA (IF "(" condicion
-    ")" bloque ...) y devolvían dicts. Compartían prefijo con los marcadores y generaban
-    conflictos shift/reduce que impedían reducir 'inicio_if'. Ahora TODAS están sobre los
-    marcadores (inicio_if / rama_else / cabecera_while) y llaman a gen.if_fin()/while_fin().
-  - Los errores de paréntesis y de 'repeat' pasaron DENTRO de los marcadores (inicio_if,
-    cabecera_while), así el BF se emite igual aunque falte un símbolo.
-  - Generador sin tercetos LABEL (ver CodigoIntermedio.py).
-  - main: imprime los saltos sin completar (debe ser []).
-
-PRÓXIMOS PASOS PREVISTOS
-  [PASO 3] ámbitos de función, invocaciones, RET, AUTO  (+ correcciones: >=1 parámetro,
-           falta de RET en AUTO)
-  [PASO 4] COMPTIME
-  [PASO 5] clases, private/friend, acceso con '.', herencia (+ corrección de 'extends')
+[PASO 3] FUNCIONES
+  - Nuevos no terminales marcador 'cabecera_funcion', 'cabecera_auto' y 'cabecera_metodo':
+    se reducen justo después del ')' de la cabecera, que es el momento de abrir el ámbito,
+    declarar los parámetros y crear la unidad de código de la función (SLY no admite acciones
+    a mitad de regla).
+  - declaracion_funcion cierra la función en el generador (finalizar_funcion_decl).
+  - invocacion_funcion emite ARG / CALL y devuelve el Operando del CALL.
+    Ya no se devuelve ERR en 'factor'.
+  - sentencia_retorno emite el terceto RET y devuelve None (antes devolvía un dict).
+[PASO 5] CLASES, MÉTODOS Y '.'
+  - Los métodos usan 'cabecera_metodo' (misma idea que las funciones), así su cuerpo se
+    compila en su propia unidad y NO ensucia el código de main.
+  - 'invocacion_metodo_objeto' ahora es   ref_variable DOT ID "(" args ")"   (antes ID DOT ID),
+    porque con ID DOT ID había un conflicto shift/reduce con 'ref_variable DOT ID' que
+    impedía leer 'obj.atributo' en una expresión o a la izquierda de ':='.
+  - 'ref_variable' y 'destino_asignacion' llaman a gen.acceso_miembro_punto(_destino),
+    que ahora existe en el generador.
+[CORRECCIONES]
+  - factor ahora admite  "(" expresion ")"  (antes no se podía escribir (a + b) * c).
+  - La constante de punto flotante en 'factor' usa el token FLOAT (antes DOUBLEF, que es la
+    palabra reservada del tipo, por lo que 1.5 / 2.0 nunca se reconocían como operando).
+  - error() registra el error en gen.errores: si hay errores sintácticos main.py ya no genera
+    el Assembler (antes imprimía el error pero igual generaba un .asm vacío).
+[TP4]
+  - Se eliminó el bloque __main__ (las pruebas están ahora en main.py).
+  - MOSTRAR_AST queda en False: el pseudo-árbol ya casi no se construye.
 =====================================================================================
 """
 
 import json
 from sly import Parser
 from AnalizadorLexico import AnalizadorLexico
-from CodigoIntermedio import (GeneradorCodigo, GestorAmbitos, Errores,
-                               TablaSimbolosSemantica, ERR)
+from CodigoIntermedio import GeneradorCodigo, ERR, VOID
 
-MOSTRAR_AST = True
+MOSTRAR_AST = False
 
 
 class AnalizadorSintactico(Parser):
@@ -148,44 +128,37 @@ class AnalizadorSintactico(Parser):
             'variables': p.lista_ids
         }
 
-    @_('tipo_dato FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': p.tipo_dato,
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    # ------------------------------------------------------------------
+    # [PASO 3] FUNCIONES
+    # ------------------------------------------------------------------
+    @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_funcion(self, p):
+        self.gen.iniciar_funcion_decl(p.tipo_dato, p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
 
-    @_('AUTO FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_auto ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'AUTO',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_auto['cuerpo'],
-            'expresion_retorno': p.bloque_auto['retorno']
-        }
+    @_('FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_funcion(self, p):
+        self.gen.iniciar_funcion_decl(VOID, p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
 
-    @_('FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
+    @_('AUTO FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_auto(self, p):
+        self.gen.iniciar_funcion_decl('AUTO', p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
+
+    @_('cabecera_funcion bloque_declarativo bloque_obligatorio ";"')
     def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'VOID',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+        self.gen.finalizar_funcion_decl(self._linea(p))
+        return None
+
+    @_('cabecera_auto bloque_declarativo bloque_auto ";"')
+    def declaracion_funcion(self, p):
+        self.gen.finalizar_funcion_decl(self._linea(p))
+        return None
 
     # ------------------------------------------------------------------
-    # SECCIÓN DE CLASES, HERENCIA Y MIEMBROS (PASO 5)
+    # [PASO 5] CLASES, HERENCIA Y MIEMBROS
     # ------------------------------------------------------------------
-
     @_('CLASS ID')
     def inicio_clase(self, p):
         self.gen.iniciar_clase(p.ID, self._linea(p))
@@ -200,6 +173,7 @@ class AnalizadorSintactico(Parser):
     def declaracion_clase(self, p):
         self.gen.cerrar_clase(p.inicio_clase, self._linea(p))
         return None
+
     @_('inicio_clase BEGIN cuerpo_clase END')
     def declaracion_clase(self, p):
         self.gen.cerrar_clase(p.inicio_clase, self._linea(p))
@@ -231,13 +205,19 @@ class AnalizadorSintactico(Parser):
     def atributo_publico(self, p):
         return self.gen.declarar_atributo(p.tipo_dato, p.ID, visibilidad='public', linea=self._linea(p))
 
-    @_('PRIVATE tipo_dato FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def metodo_privado(self, p):
-        return self.gen.declarar_metodo(p.tipo_dato, p.ID, p.lista_parametros, p.bloque_declarativo, p.bloque_obligatorio, visibilidad='private', linea=self._linea(p))
+    @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_metodo(self, p):
+        return self.gen.iniciar_metodo(p.tipo_dato, p.ID, p.lista_parametros, self._linea(p))
 
-    @_('tipo_dato FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
+    @_('PRIVATE cabecera_metodo bloque_declarativo bloque_obligatorio ";"')
+    def metodo_privado(self, p):
+        self.gen.finalizar_metodo(p.cabecera_metodo, 'private', self._linea(p))
+        return None
+
+    @_('cabecera_metodo bloque_declarativo bloque_obligatorio ";"')
     def metodo_publico(self, p):
-        return self.gen.declarar_metodo(p.tipo_dato, p.ID, p.lista_parametros, p.bloque_declarativo, p.bloque_obligatorio, visibilidad='public', linea=self._linea(p))
+        self.gen.finalizar_metodo(p.cabecera_metodo, 'public', self._linea(p))
+        return None
 
     @_('FRIEND ID ";"')
     def declaracion_friend(self, p):
@@ -245,9 +225,8 @@ class AnalizadorSintactico(Parser):
         return None
 
     # ------------------------------------------------------------------
-    # RESTO DE REGLAS (IDs, Parámetros, Sentencias, Expresiones y Errores)
+    # IDs, parámetros, sentencias, expresiones
     # ------------------------------------------------------------------
-
     @_('ID "," lista_ids')
     def lista_ids(self, p):
         return [p.ID] + p.lista_ids
@@ -320,17 +299,11 @@ class AnalizadorSintactico(Parser):
 
     @_('BEGIN sentencias_no_retorno sentencia_retorno ";" END')
     def bloque_auto(self, p):
-        return {
-            'cuerpo': p.sentencias_no_retorno + [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+        return None
 
     @_('BEGIN sentencia_retorno ";" END')
     def bloque_auto(self, p):
-        return {
-            'cuerpo': [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+        return None
 
     @_('IF "(" condicion ")"')
     def inicio_if(self, p):
@@ -395,7 +368,7 @@ class AnalizadorSintactico(Parser):
     @_('ref_variable DOT ID')
     def destino_asignacion(self, p):
         return self.gen.acceso_miembro_punto_destino(p.ref_variable, p.ID, self._linea(p))
-    
+
     @_('ID')
     def ref_variable(self, p):
         return self.gen.variable(p.ID, self._linea(p))
@@ -403,13 +376,11 @@ class AnalizadorSintactico(Parser):
     @_('ref_variable DOT ID')
     def ref_variable(self, p):
         return self.gen.acceso_miembro_punto(p.ref_variable, p.ID, self._linea(p))
-    
+
     @_('RET "(" expresion ")"')
     def sentencia_retorno(self, p):
-        return {
-            'tipo': 'RETORNO',
-            'expresion': p.expresion
-        }
+        self.gen.retorno(p.expresion, self._linea(p))
+        return None
 
     @_('POUT "(" TEXT_STRING ")"')
     def salida(self, p):
@@ -421,39 +392,24 @@ class AnalizadorSintactico(Parser):
         self.gen.salida_expresion(p.expresion)
         return None
 
+    # ------------------------------------------------------------------
+    # [PASO 3 / 5] INVOCACIONES: emiten ARG / CALL y devuelven el Operando del CALL
+    # ------------------------------------------------------------------
     @_('ID "(" lista_expresiones ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': p.lista_expresiones,
-        }
+        return self.gen.invocar_funcion(p.ID, p.lista_expresiones, self._linea(p))
 
     @_('ID "(" ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': []
-        }
+        return self.gen.invocar_funcion(p.ID, [], self._linea(p))
 
-    @_('ID DOT ID "(" lista_expresiones ")"')
+    @_('ref_variable DOT ID "(" lista_expresiones ")"')
     def invocacion_metodo_objeto(self, p):
-        return {
-            'tipo': 'INVOCACION_METODO',
-            'objeto': p.ID0,
-            'metodo': p.ID1,
-            'argumentos': p.lista_expresiones,
-        }
+        return self.gen.invocar_metodo(p.ref_variable, p.ID, p.lista_expresiones, self._linea(p))
 
-    @_('ID DOT ID "(" ")"')
+    @_('ref_variable DOT ID "(" ")"')
     def invocacion_metodo_objeto(self, p):
-        return {
-            'tipo': 'INVOCACION_METODO',
-            'objeto': p.ID0,
-            'metodo': p.ID1,
-            'argumentos': []
-        }
+        return self.gen.invocar_metodo(p.ref_variable, p.ID, [], self._linea(p))
 
     @_('expresion "," lista_expresiones')
     def lista_expresiones(self, p):
@@ -501,11 +457,11 @@ class AnalizadorSintactico(Parser):
 
     @_('invocacion_funcion')
     def factor(self, p):
-        return ERR
+        return p.invocacion_funcion
 
     @_('invocacion_metodo_objeto')
     def factor(self, p):
-        return ERR
+        return p.invocacion_metodo_objeto
 
     @_('ref_variable')
     def factor(self, p):
@@ -514,6 +470,10 @@ class AnalizadorSintactico(Parser):
     @_('DOUBLEF')
     def factor(self, p):
         return self.gen.constante_float(p.DOUBLEF)
+
+    @_('"(" expresion ")"')
+    def factor(self, p):
+        return p.expresion
 
     @_('CONST_UI')
     def factor(self, p):
@@ -525,126 +485,11 @@ class AnalizadorSintactico(Parser):
 
     def error(self, token):
         if token:
-            print(f"Línea {token.lineno}: Error: Símbolo inesperado '{token.value}'.")
+            linea = token.lineno
+            msg = f"Símbolo inesperado '{token.value}'."
         else:
-            print("Error: Se alcanzó el fin de archivo (EOF) inesperadamente.")
-
-if __name__ == '__main__':
-    # [PASO 1] Infraestructura base del compilador
-
-    ts = TablaSimbolosSemantica()
-    errores = Errores()
-    ambitos = GestorAmbitos(ts, errores)
-    gen = GeneradorCodigo(ts, errores, ambitos)
-
-    lexer = AnalizadorLexico(ts)
-    parser = AnalizadorSintactico(ts, gen)
-
-    # [PASO 1 & 2] Programa de prueba estándar (Variables, Expresiones, WHILE, IF)
-    codigo_prueba_paso1 = '''
-    prueba_paso1
-    UINTEGER a, b, c;
-    DOUBLEF x, y;
-    BEGIN
-        a := 5$ui;
-        b := a + 2$ui * a;
-        c := b = 3$ui;
-        x := 1.5 * 2.0;
-        y := -x;
-        a := toui(x) + b;
-        pout(a);
-        pout({fin del programa});
-
-        while (a < 10$ui) repeat
-        begin
-            a := a + 1$ui;
-        end;
-
-        if (a == 5$ui)
-            pout(a);
-        else
-            begin
-                b := a;
-                c := b;
-            end
-        end_if;
-
-        if (x > 1.0)
-            y := x;
-        end_if;
-
-        if (a < y)
-            pout(a);
-        end_if;
-        a := x;
-        b := a + y;
-        a := -b;
-        z := 1$ui;
-    END
-    '''
-    #parser.parse(lexer.tokenize(codigo_prueba_paso1))
-
-
-    # Salidas generales del primer programa analizado
-    #gen.imprimir()
-    #print('Saltos sin completar (debe ser []):', gen.control_pendiente())
-    #errores.imprimir()
-    #ts.imprimir_tabla()
-
-   
-# [PASO 5 - BATERÍA AVANZADA] Pruebas de Herencia, Privacidad, Friend y Ambigüedad
-    ts_avanzada = TablaSimbolosSemantica()
-    er_avanzada = Errores()
-    amb_avanzada = GestorAmbitos(ts_avanzada, er_avanzada)
-    gen_avanzada = GeneradorCodigo(ts_avanzada, er_avanzada, amb_avanzada)
-
-    codigo_pruebas_avanzadas = '''
-    prueba_avanzada_oop
-    
-    CLASS vehiculo BEGIN
-        UINTEGER velocidad;
-        PRIVATE UINTEGER codigo_interno;
-        FRIEND taller;
-    END;
-
-    CLASS coche extends vehiculo BEGIN
-        UINTEGER cantidad_puertas;
-    END;
-
-    CLASS taller BEGIN
-    END;
-
-    CLASS base_a BEGIN
-        UINTEGER id_colision;
-    END;
-
-    CLASS base_b extends base_a BEGIN
-        UINTEGER id_colision;
-    END;
-
-    CLASS hija_colision extends base_b BEGIN
-    END;
-
-    BEGIN
-        pout({ejecutando pruebas avanzadas});
-    END
-    '''
-
-    print("\n######## PRUEBA AVANZADA: OOP, PRIVACIDAD Y AMBIGÜEDAD ########")
-    AnalizadorSintactico(ts_avanzada, gen_avanzada).parse(
-        AnalizadorLexico(ts_avanzada).tokenize(codigo_pruebas_avanzadas)
-    )
-
-    # --- PRUEBA MANUAL DE AMBIGÜEDAD (OPCIÓN 3) ---
-    # Simulamos entrar al ámbito de 'hija_colision' y buscar el miembro colisionado 'id_colision'
-    print("\n--- Verificando Detección de Ambigüedad en 'hija_colision' ---")
-    amb_avanzada.iniciar_ambito('hija_colision', linea=50)
-    resultado = amb_avanzada.validar_y_obtener_miembro('hija_colision', 'id_colision', linea=51)
-    amb_avanzada.cerrar_ambito()
-    
-    if resultado is None:
-        print("[ÉXITO] El sistema detectó correctamente la ambigüedad o bloqueo del miembro.")
-
-    ts_avanzada.imprimir_tabla()
-    er_avanzada.imprimir()
-    print("######## FIN PRUEBA AVANZADA ########\n")
+            linea = 0
+            msg = "Se alcanzó el fin de archivo (EOF) inesperadamente."
+        print(f"Línea {linea}: Error: {msg}")
+        # Se registra para que main.py NO genere Assembler si hubo errores sintácticos.
+        self.gen.errores.lista.append((linea, f"Error Sintáctico: {msg}"))
