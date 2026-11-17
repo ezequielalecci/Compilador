@@ -91,12 +91,12 @@ class AnalizadorLexico(Lexer):
 
         lexema_orig = t.value
         if lexema_orig[0] == '-':
-            print(f"Error Léxico (Línea {t.lineno}): La constante unsigned '{lexema_orig}' no puede llevar signo negativo.")
+            print(f"WARNING Léxico (Línea {t.lineno}): La constante unsigned '{lexema_orig}' no puede llevar signo negativo. Se le asignará su valor positivo")
 
         digitos = lexema_orig.lstrip('+-')[:-3]
         valor = int(digitos)
         if valor > MAX_UI:
-            print(f"Error Léxico (Línea {t.lineno}): La constante '{lexema_orig}' está fuera del rango [0, {MAX_UI}].")
+            print(f"WARNING Léxico (Línea {t.lineno}): La constante '{lexema_orig}' está fuera del rango [0, {MAX_UI}]. Se le asiganara el máximo valor permitido")
             valor = MAX_UI          # valor de recuperación: el parser sigue
 
         t.value = valor
@@ -136,7 +136,7 @@ class AnalizadorLexico(Lexer):
             signo = -1.0 if valor < 0 or lexema_orig.startswith('-') else 1.0
             valor_abs = abs(valor)
             if not (MIN_POS < valor_abs < MAX_POS):
-                print(f"Error Léxico (Línea {t.lineno}): El valor flotante '{lexema_orig}' está fuera del rango permitido de 64 bits.")
+                print(f"Error Léxico (Línea {t.lineno}): El valor flotante '{lexema_orig}' está fuera del rango permitido de 64 bits. Se le asiganará el máximo valor posible")
                 valor = signo * (MAX_POS if valor_abs >= MAX_POS else MIN_POS)
                 lexema_ts = repr(valor)
 

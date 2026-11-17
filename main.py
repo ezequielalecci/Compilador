@@ -19,68 +19,39 @@ from GeneradorAssembler import GeneradorAssembler
 # ----------------------------------------------------------------------------
 # PEGÁ ACÁ TU PROGRAMA DE PRUEBA
 # ----------------------------------------------------------------------------
+
+
 PROGRAMA = '''
-prueba_completa
-UINTEGER a, b;
-DOUBLEF x, y;
+prueba
 
-UINTEGER FUNCTION doble(UINTEGER n)
-UINTEGER a;
-BEGIN
-    a := (n + n);
-    ret(a);
-END;
+uinteger x, res;
+doublef y;
 
-AUTO FUNCTION media(DOUBLEF u, DOUBLEF v)
-DOUBLEF a;
-BEGIN
-    a := (u + v) / 2.0;
-    ret(a);
-END;
-
-FUNCTION saludar(UINTEGER veces)
-BEGIN
-    pout({hola desde una funcion});
-    pout(veces);
-END;
-
-CLASS contador BEGIN
-    UINTEGER cuenta;
-    PRIVATE UINTEGER paso;
-    UINTEGER FUNCTION sumar(UINTEGER k)
-    BEGIN
-        cuenta := cuenta + k;
-        ret(cuenta);
-    END;
-END;
-
-contador c;
-
-BEGIN
-    a := 5$ui;
-    b := doble(a) + 1$ui;
+auto function prueba_ifs(uinteger a, doublef b)
+uinteger aux;
+begin
     pout(b);
+    aux := toui(b);
+    
+    if (a > aux) ret(a);
+    else 
+        begin
+            if (a < aux) ret(b);
+            else pout({iguales});
+            end_if;
+        end
+    end_if;
+    ret(0.0);
+end;
 
-    x := media(1.5, 2.5);
-    pout(x);
-
-    saludar(b);
-
-    c.cuenta := 10$ui;
-    a := c.sumar(5$ui);
-    pout(a);
-    pout(c.cuenta);
-
-    while (a < 20$ui) repeat
-    begin
-        a := a + 1$ui;
-        pout(a);
-    end;
-
-    a := toui(2.0);
-    pout(a);
+BEGIN
+    x := 1$ui;
+    y := 0.0;
+    res := toui(prueba_ifs(x, y));
+    pout(res);
 END
 '''
+
 
 
 def compilar(codigo, salida_asm='salida.asm'):
@@ -103,7 +74,6 @@ def compilar(codigo, salida_asm='salida.asm'):
     print(" CÓDIGO INTERMEDIO (TERCETOS)")
     print("=" * 70)
     gen.imprimir()
-    print('\nSaltos sin completar (debe ser []):', gen.control_pendiente())
 
     errores.imprimir()
     ts.imprimir_tabla()

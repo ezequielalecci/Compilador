@@ -16,7 +16,7 @@ Temas del grupo:
   - Tema 34 : conversión explícita float -> entero (TOUI) y chequeo de tipos asociado
 
 =====================================================================================
-CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR  (marcados con [PASO 3] / [PASO 5] / [TP4])
+CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR  (marcados con [PASO 3] / [PASO 5] / [TP4] / [T34])
 =====================================================================================
 [PASO 3] FUNCIONES
   - iniciar_funcion_decl / finalizar_funcion_decl: abren y cierran el ámbito de la función,
@@ -45,6 +45,14 @@ CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR  (marcados con [PASO 3] / [PASO 5] / [T
   - COMPTIME acepta también constantes flotantes.
   - Se eliminaron el bloque __main__ de pruebas (ahora está en main.py) y un método
     'operacion' duplicado.
+[T34] TEMA 34 SEGÚN EL ENUNCIADO
+  - Operando tiene un nuevo campo 'conv': indica que la expresión contiene una conversión
+    explícita TOUI.
+  - Se permiten operaciones y comparaciones con operandos de distinto tipo SOLO si la
+    expresión incluye TOUI. En ese caso el generador inserta la conversión implícita
+    ( TOUI , flotante , - ) sobre el operando DOUBLEF; el resultado es UINTEGER.
+  - Asignar DOUBLEF a UINTEGER sin TOUI es error (mensaje 'asignación incompatible').
+  - Se reemplazó _tipo_resultado por _unificar.
 =====================================================================================
 """
 
@@ -63,7 +71,7 @@ VOID = 'VOID'           # tipo de retorno de las funciones sin tipo
 TIPOS_BASICOS = {UINTEGER, DOUBLEF}
 MAX_UI = 65535
 
-# El tema 34 solo EXIGE conversión en el sentido flotante -> entero.
+# Asignar entero a flotante sin conversión sigue sin permitirse.
 PERMITE_ENTERO_A_FLOAT = False
 
 
@@ -381,6 +389,7 @@ class UnidadCodigo:
 class Operando:
     ref: Union[int, str, None]   # int -> resultado de un terceto ; str -> símbolo/constante de la TS
     tipo: str
+    conv: bool = False           # [T34] la expresión contiene una conversión explícita TOUI
 
 
 ERR = Operando(None, ERROR)
@@ -502,25 +511,39 @@ class GeneradorCodigo:
         return self.acceso_miembro_punto(obj, miembro, linea)
 
     # ---------------- chequeo de tipos (tema 34) ----------------
-    def _tipo_resultado(self, t1, t2, linea) -> Optional[str]:
+    def _unificar(self, izq: Operando, der: Operando, linea):
+        """[T34] Devuelve (tipo, ref_izq, ref_der) o None si hay error.
+        - Mismo tipo: pasa directo.
+        - Tipos distintos: solo se permite si alguna de las expresiones contiene un TOUI
+          explícito; en ese caso se inserta la conversión implícita UITOF sobre el entero
+          y el resultado es DOUBLEF."""
+        t1, t2 = izq.tipo, der.tipo
         if t1 not in TIPOS_BASICOS or t2 not in TIPOS_BASICOS:
             self.errores.semantico(linea, f"operación no válida entre '{t1}' y '{t2}'.")
             return None
-        if t1 != t2:
+        if t1 == t2:
+            return t1, izq.ref, der.ref
+        if not (izq.conv or der.conv):
             self.errores.semantico(
-                linea, f"operandos de tipos distintos ({t1} y {t2}); con el tema 34 hace falta "
-                       f"conversión explícita con TOUI.")
+                linea, f"operandos de tipos distintos ({t1} y {t2}) sin conversión explícita; "
+                       f"con el tema 34 hace falta TOUI.")
             return None
-        return t1
+        # El operando DOUBLEF se convierte a UINTEGER (conversión implícita) y el
+        # resultado queda UINTEGER.
+        if t1 == DOUBLEF:
+            return UINTEGER, self.unidad.emitir('TOUI', izq.ref, None, UINTEGER), der.ref
+        return UINTEGER, izq.ref, self.unidad.emitir('TOUI', der.ref, None, UINTEGER)
 
     # ---------------- expresiones ----------------
     def operacion(self, op, izq, der, linea) -> Operando:
         """op en {'+','-','*','/'}"""
         if ERROR in (izq.tipo, der.tipo):
             return ERR
-        tipo = self._tipo_resultado(izq.tipo, der.tipo, linea)
-        if tipo is None:
+        r = self._unificar(izq, der, linea)
+        if r is None:
             return ERR
+        tipo, ref1, ref2 = r
+        conv = izq.conv or der.conv
 
         # [PASO 4 - COMPTIME / Constant Folding] Plegado de constantes aritméticas.
         # [TP4] Solo se pliega si el resultado entra en [0, 65535]; si no, se emite el
@@ -541,7 +564,7 @@ class GeneradorCodigo:
                 if 0 <= resultado_val <= MAX_UI:
                     return self.constante_ui(resultado_val)
 
-        return Operando(self.unidad.emitir(op, izq.ref, der.ref, tipo), tipo)
+        return Operando(self.unidad.emitir(op, ref1, ref2, tipo), tipo, conv)
 
     def negar(self, expr, linea) -> Operando:
         if expr.tipo == ERROR:
@@ -549,15 +572,17 @@ class GeneradorCodigo:
         if expr.tipo == UINTEGER:
             self.errores.semantico(linea, "no se puede aplicar signo negativo a un UINTEGER.")
             return ERR
-        return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo)
+        return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo, expr.conv)
 
     def comparacion(self, op, izq, der, linea) -> Operando:
         """op en {'<','<=','>','>=','==','!='}"""
         if ERROR in (izq.tipo, der.tipo):
             return ERR
-        if self._tipo_resultado(izq.tipo, der.tipo, linea) is None:
+        r = self._unificar(izq, der, linea)
+        if r is None:
             return ERR
-        return Operando(self.unidad.emitir(op, izq.ref, der.ref, BOOL), BOOL)
+        _, ref1, ref2 = r
+        return Operando(self.unidad.emitir(op, ref1, ref2, BOOL), BOOL)
 
     def convertir_toui(self, expr, linea) -> Operando:
         """Tema 34: TOUI(expr) convierte DOUBLEF -> UINTEGER."""
@@ -566,7 +591,7 @@ class GeneradorCodigo:
         if expr.tipo != DOUBLEF:
             self.errores.semantico(linea, f"TOUI espera una expresión DOUBLEF y recibió {expr.tipo}.")
             return ERR
-        return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER)
+        return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER, True)
 
     def _es_constante(self, ref) -> bool:
         return isinstance(ref, str) and (ref.endswith('$ui') or self.tabla.buscar(ref, 'FLOAT') is not None)
@@ -575,12 +600,14 @@ class GeneradorCodigo:
         if ERROR in (destino.tipo, expr.tipo):
             return destino
 
+        # [T34] Una expresión que mezcla tipos con TOUI ya es UINTEGER (ver _unificar),
+        # así que asignarla a un UINTEGER no necesita conversión extra. Una expresión
+        # DOUBLEF pura sí necesita TOUI explícito.
         compatible = destino.tipo == expr.tipo or (
             PERMITE_ENTERO_A_FLOAT and destino.tipo == DOUBLEF and expr.tipo == UINTEGER)
 
         if not compatible:
-            extra = " Usar TOUI(...)." if destino.tipo == UINTEGER and expr.tipo == DOUBLEF else ""
-            self.errores.semantico(linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}.{extra}")
+            self.errores.semantico(linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}.")
             return destino
 
         # [PASO 4 - COMPTIME] Validación estricta y registro de valor estático

@@ -145,15 +145,17 @@ class GeneradorAssembler:
         a, _, _ = self._op(t.a1, uid)
         d = self._aux(uid, i)
         self.e(f'fld {a}')
-        self.e('fld st(0)')
-        self.e('frndint')
-        self.e('fcomp st(1)')           # ST0 = a ; distinto => tenia parte fraccionaria
-        self.e('fstsw ax'); self.e('sahf')
-        self.e('jne _err_conv')                               # control g)
+        # forzar redondeo por truncamiento (RC = 11)
+        self.e('fnstcw _cw_old')
+        self.e('mov ax, _cw_old')
+        self.e('or ax, 0C00h')
+        self.e('mov _cw_new, ax')
+        self.e('fldcw _cw_new')
         self.e('fistp DWORD PTR _conv32')
+        self.e('fldcw _cw_old')                 # restaurar antes de cualquier salto
         self.e('mov eax, _conv32')
         self.e('cmp eax, 65535')
-        self.e('ja _err_conv')                                # negativo o > 65535
+        self.e('ja _err_conv')                  # negativo (como sin signo es enorme) o > 65535
         self.e(f'mov {d}, ax')
 
     def _asignacion(self, uid, t):
@@ -278,8 +280,9 @@ class GeneradorAssembler:
               'includelib \\masm32\\lib\\user32.lib',
               'includelib \\masm32\\lib\\msvcrt.lib', '', '.data']
         L += ['_titulo DB "Programa",0',
-              '_fmt_ui DB "%u",0', '_fmt_f DB "%g",0',
-              '_buf DB 400 DUP(0)', '_conv32 DD 0']
+                '_fmt_ui DB "%u",0', '_fmt_f DB "%g",0',
+                '_buf DB 400 DUP(0)', '_conv32 DD 0',
+                '_cw_old DW 0', '_cw_new DW 0']
         for etiqueta, msg in ERRORES_RT.items():
             L.append(f'{etiqueta[1:]}_msg DB "{msg}",0')
         # variables del programa
