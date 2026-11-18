@@ -1,0 +1,7 @@
+prueba
+
+fantasma f;
+
+BEGIN
+    pout({fin});
+END

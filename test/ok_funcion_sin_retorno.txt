@@ -1,0 +1,14 @@
+prueba
+
+{{ Funcion sin tipo (procedimiento). Esperado: funcion sin retorno }}
+
+function aviso(uinteger x)
+begin
+    pout({funcion sin retorno});
+    pout({muestro x:});
+    pout(x);
+end;
+
+BEGIN
+    aviso(3$ui);
+END

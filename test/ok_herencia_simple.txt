@@ -1,0 +1,23 @@
+prueba
+
+{{ Esperado: 1 y 2 }}
+
+class base
+begin
+    uinteger x;
+end;
+
+class derivada
+begin
+    uinteger y;
+    extends base;
+end;
+
+derivada o;
+
+BEGIN
+    o.x := 1$ui;
+    o.y := 2$ui;
+    pout(o.x);
+    pout(o.y);
+END

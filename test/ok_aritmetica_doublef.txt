@@ -1,0 +1,18 @@
+prueba
+
+{{ Esperado: 4.0, 1.0, 3.75 y 1.6 }}
+
+doublef a, b, r;
+
+BEGIN
+    a := 2.5;
+    b := 1.5;
+    r := a + b;
+    pout(r);
+    r := a - b;
+    pout(r);
+    r := a * b;
+    pout(r);
+    r := a / b;
+    pout(r);
+END

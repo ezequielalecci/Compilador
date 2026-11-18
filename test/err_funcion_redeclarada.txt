@@ -1,0 +1,15 @@
+prueba
+
+function f()
+begin
+    pout({primera});
+end;
+
+function f()
+begin
+    pout({segunda});
+end;
+
+BEGIN
+    f();
+END

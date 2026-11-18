@@ -1,0 +1,21 @@
+prueba
+
+{{ Esperado: test 1: ok y test 2: ok }}
+
+uinteger a, b;
+
+BEGIN
+    b := 8$ui;
+
+    if (a=(3$ui)==3$ui)
+        pout({test 1: ok});
+    else
+        pout({test 1: MAL});
+    end_if;
+
+    if (a=(b)!=3$ui)
+        pout({test 2: ok});
+    else
+        pout({test 2: MAL});
+    end_if;
+END

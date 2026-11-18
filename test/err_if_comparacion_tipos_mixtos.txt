@@ -1,0 +1,12 @@
+prueba
+
+{{ no se puede comparar uinteger con doublef }}
+
+uinteger a;
+doublef x;
+
+BEGIN
+    a := 1$ui;
+    x := 1.0;
+    if (a == x) pout({igual}); end_if;
+END

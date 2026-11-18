@@ -1,0 +1,7 @@
+prueba
+
+uinteger a, b
+
+BEGIN
+    a := 1$ui;
+END

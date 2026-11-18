@@ -1,0 +1,12 @@
+prueba
+
+{{ la cadena no puede ocupar varias lineas }}
+
+BEGIN
+    pout({
+        esto
+        no
+        se
+        puede
+    });
+END

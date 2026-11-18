@@ -89,30 +89,66 @@ class TablaSimbolos:
 
         return None
 
-    def imprimir_tabla(self):
-        ancho = 110
+    def imprimir_tabla(self, mostrar_reservadas=True, ascii_puro=False):
+        if ascii_puro:
+            H, V = '-', '|'
+            TL, TM, TR = '+', '+', '+'
+            ML, MM, MR = '+', '+', '+'
+            BL, BM, BR = '+', '+', '+'
+        else:
+            H, V = '─', '│'
+            TL, TM, TR = '┌', '┬', '┐'
+            ML, MM, MR = '├', '┼', '┤'
+            BL, BM, BR = '└', '┴', '┘'
 
-        print("\n" + "=" * ancho)
-        print(f"{'TABLA DE SÍMBOLOS':^{ancho}}")
-        print("=" * ancho)
+        encabezados = ['NOMBRE INTERNO', 'TOKEN', 'TIPO', 'USO', 'ÁMBITO', 'VALOR']
+        maximos     = [34, 12, 10, 10, 24, 22]
 
-        print(
-            f"{'NOMBRE INTERNO':<30} | "
-            f"{'TOKEN':<12} | "
-            f"{'TIPO':<12} | "
-            f"{'USO':<15} | "
-            f"{'ÁMBITO':<25}"
-        )
+        def celda(x):
+            if x is None or x == '':
+                return '-'
+            return str(x)
 
-        print("-" * ancho)
+        filas = []
+        for s in self._simbolos.values():
+            es_reservada = self.PALABRAS_RESERVADAS.get(s['lexema']) == s['token']
+            if es_reservada and not mostrar_reservadas:
+                continue
+            filas.append([
+                celda(s['lexema']),
+                celda(s['token']),
+                celda(s.get('tipo')),
+                celda(s.get('uso')),
+                celda(s.get('ambito')),
+                celda(s.get('valor')),
+            ])
 
-        for simbolo in self._simbolos.values():
-            print(
-                f"{simbolo['lexema']:<30} | "
-                f"{simbolo['token']:<12} | "
-                f"{str(simbolo.get('tipo') or '-'):<12} | "
-                f"{str(simbolo.get('uso') or '-'):<15} | "
-                f"{str(simbolo.get('ambito') or '-'):<25}"
-            )
+        # Ancho de cada columna: el del contenido más largo, con tope por columna
+        anchos = []
+        for i, enc in enumerate(encabezados):
+            ancho = max([len(enc)] + [len(f[i]) for f in filas])
+            anchos.append(min(ancho, maximos[i]))
 
-        print("=" * ancho + "\n")
+        def recortar(texto, ancho):
+            return texto if len(texto) <= ancho else texto[:ancho - 3] + '...'
+
+        def linea(izq, medio, der):
+            return izq + medio.join(H * (a + 2) for a in anchos) + der
+
+        def fila(valores):
+            celdas = [f' {recortar(v, a).ljust(a)} ' for v, a in zip(valores, anchos)]
+            return V + V.join(celdas) + V
+
+        total = sum(anchos) + 3 * len(anchos) + 1
+        titulo = 'TABLA DE SÍMBOLOS'
+
+        print()
+        print(linea(TL, H, TR))
+        print(V + titulo.center(total - 2) + V)
+        print(linea(ML, TM, MR))
+        print(fila(encabezados))
+        print(linea(ML, MM, MR))
+        for f in filas:
+            print(fila(f))
+        print(linea(BL, BM, BR))
+        print(f"  {len(filas)} símbolo(s)\n")

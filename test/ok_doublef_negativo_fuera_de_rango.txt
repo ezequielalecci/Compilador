@@ -1,0 +1,10 @@
+prueba
+
+{{ -1.8d308 esta por debajo del minimo de doublef }}
+
+doublef l;
+
+BEGIN
+    l := -1.8d308;
+    pout(l);
+END

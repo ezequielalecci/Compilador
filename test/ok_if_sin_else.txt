@@ -1,0 +1,15 @@
+prueba
+
+{{ Esperado: se imprime solo "si" }}
+
+uinteger a;
+
+BEGIN
+    a := 5$ui;
+    if (a > 3$ui)
+        pout({si});
+    end_if;
+    if (a < 3$ui)
+        pout({no});
+    end_if;
+END

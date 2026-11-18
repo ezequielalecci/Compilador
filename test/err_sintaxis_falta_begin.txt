@@ -1,0 +1,7 @@
+prueba
+
+uinteger a;
+
+    a := 1$ui;
+    pout(a);
+END

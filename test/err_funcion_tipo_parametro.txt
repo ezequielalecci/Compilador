@@ -1,0 +1,14 @@
+prueba
+
+uinteger res;
+doublef y;
+
+uinteger function doble(uinteger a)
+begin
+    ret(a + a);
+end;
+
+BEGIN
+    y := 1.5;
+    res := doble(y);
+END

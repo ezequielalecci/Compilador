@@ -1,0 +1,10 @@
+prueba
+
+{{ uinteger no admite negativos }}
+
+uinteger a;
+
+BEGIN
+    a := -4$ui;
+    pout(a);
+END

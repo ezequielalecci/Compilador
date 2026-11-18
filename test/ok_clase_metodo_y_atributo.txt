@@ -1,0 +1,21 @@
+prueba
+
+{{ Esperado: 10.5 }}
+
+class test
+begin
+    doublef fijo;
+
+    uinteger function constructor(doublef val)
+    begin
+        fijo := val;
+        ret(0$ui);
+    end;
+end;
+
+test t;
+
+BEGIN
+    t.constructor(10.5);
+    pout(t.fijo);
+END

@@ -1,0 +1,7 @@
+prueba
+
+uinteger res;
+
+BEGIN
+    res := inexistente(1$ui);
+END

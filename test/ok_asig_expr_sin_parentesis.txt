@@ -1,0 +1,20 @@
+prueba
+
+{{ Asignacion sin parentesis dentro de una condicion.
+   Esperado: 1 }}
+
+uinteger b, res;
+
+auto function comparar(uinteger b)
+uinteger a;
+begin
+    if (a=3$ui==b) ret(1$ui);
+    else ret(2$ui);
+    end_if;
+end;
+
+BEGIN
+    b := 3$ui;
+    res := comparar(b);
+    pout(res);
+END

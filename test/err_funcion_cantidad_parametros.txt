@@ -1,0 +1,12 @@
+prueba
+
+uinteger res;
+
+uinteger function doble(uinteger a)
+begin
+    ret(a + a);
+end;
+
+BEGIN
+    res := doble(1$ui, 2$ui);
+END

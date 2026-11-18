@@ -1,0 +1,5 @@
+prueba
+
+BEGIN
+    pout({una sola linea});
+END

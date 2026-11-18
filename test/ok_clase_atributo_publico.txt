@@ -1,0 +1,15 @@
+prueba
+
+{{ Esperado: 7 }}
+
+class caja
+begin
+    uinteger valor;
+end;
+
+caja c;
+
+BEGIN
+    c.valor := 7$ui;
+    pout(c.valor);
+END

@@ -1,0 +1,12 @@
+prueba
+
+{{ Esperado: a=6 (2+4) y c=4 }}
+
+uinteger a, b, c;
+
+BEGIN
+    b := 2$ui;
+    a := b + c=(4$ui);
+    pout(a);
+    pout(c);
+END

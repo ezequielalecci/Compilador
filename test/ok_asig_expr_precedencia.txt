@@ -1,0 +1,11 @@
+prueba
+
+{{ Esperado: a=2 y d=1 }}
+
+uinteger a, d;
+
+BEGIN
+    a := d=(1$ui) + 1$ui;
+    pout(a);
+    pout(d);
+END

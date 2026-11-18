@@ -1,0 +1,16 @@
+prueba
+
+{{ Exponente negativo, positivo con signo y sin signo }}
+
+doublef e, f, g, h;
+
+BEGIN
+    e := 3.0d-5;
+    f := 2.5d-1;
+    g := 1.2d+10;
+    h := 1.5d10;
+    pout(e);
+    pout(f);
+    pout(g);
+    pout(h);
+END

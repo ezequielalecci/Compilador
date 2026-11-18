@@ -1,0 +1,15 @@
+prueba
+
+{{ Esperado: 8 }}
+
+uinteger res;
+
+uinteger function doble(uinteger a)
+begin
+    ret(a + a);
+end;
+
+BEGIN
+    res := doble(4$ui);
+    pout(res);
+END

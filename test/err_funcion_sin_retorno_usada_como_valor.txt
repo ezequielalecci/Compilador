@@ -1,0 +1,14 @@
+prueba
+
+{{ una funcion sin tipo no devuelve valor }}
+
+uinteger res;
+
+function aviso()
+begin
+    pout({hola});
+end;
+
+BEGIN
+    res := aviso();
+END

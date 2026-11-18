@@ -1,0 +1,32 @@
+prueba
+
+{{ Los parametros se pasan por copia: x en main siempre vale 1 }}
+
+uinteger x, res;
+
+function hace_algo(uinteger x2)
+begin
+    pout({x2 al llegar a hace_algo:});
+    pout(x2);
+    x2 := 100$ui;
+    pout({x2 modificado dentro de hace_algo:});
+    pout(x2);
+end;
+
+uinteger function por_copia(uinteger x)
+begin
+    pout({x al llegar a por_copia:});
+    pout(x);
+    x := 50$ui;
+    hace_algo(x);
+    pout({x en por_copia tras hace_algo (debe seguir en 50):});
+    pout(x);
+    ret(0$ui);
+end;
+
+BEGIN
+    x := 1$ui;
+    res := por_copia(x);
+    pout({x en main al final (debe seguir en 1):});
+    pout(x);
+END

@@ -1,0 +1,6 @@
+prueba
+
+BEGIN
+    pout({hola});
+    {{ este comentario nunca se cierra
+END

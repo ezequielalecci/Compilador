@@ -1,0 +1,9 @@
+prueba
+
+{{ no se puede asignar un doublef a un uinteger }}
+
+uinteger a;
+
+BEGIN
+    a := 2.5;
+END

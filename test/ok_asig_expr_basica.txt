@@ -1,0 +1,11 @@
+prueba
+
+{{ Esperado: a=7 y b=7 }}
+
+uinteger a, b;
+
+BEGIN
+    a := b=(7$ui);
+    pout(a);
+    pout(b);
+END

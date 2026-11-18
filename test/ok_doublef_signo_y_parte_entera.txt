@@ -1,0 +1,14 @@
+prueba
+
+{{ Esperado: 1.0, -1.2 y 15.2 }}
+
+doublef a, b, c;
+
+BEGIN
+    a := 1.0;
+    b := -1.2;
+    c := 15.2;
+    pout(a);
+    pout(b);
+    pout(c);
+END
