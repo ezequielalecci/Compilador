@@ -1,0 +1,29 @@
+prueba
+
+{{ Un miembro private se usa solo desde la propia clase. Esperado: 5 }}
+
+uinteger res;
+
+class contador
+begin
+    private uinteger valor;
+
+    uinteger function setear(uinteger v)
+    begin
+        valor := v;
+        ret(0$ui);
+    end;
+
+    uinteger function leer(uinteger oblig)
+    begin
+        ret(valor);
+    end;
+end;
+
+contador c;
+
+BEGIN
+    res := c.setear(5$ui);
+    res := c.leer(0$ui);
+    pout(res);
+END

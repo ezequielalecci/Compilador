@@ -1,0 +1,8 @@
+prueba
+
+uinteger a;
+doublef a;
+
+BEGIN
+    pout({fin});
+END

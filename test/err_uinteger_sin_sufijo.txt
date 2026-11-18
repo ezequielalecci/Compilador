@@ -1,0 +1,10 @@
+prueba
+
+{{ la constante uinteger debe llevar el sufijo $ui }}
+
+uinteger a;
+
+BEGIN
+    a := 30;
+    pout(a);
+END

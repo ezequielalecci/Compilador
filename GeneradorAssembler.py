@@ -320,8 +320,11 @@ class GeneradorAssembler:
         for lex, (etq, v) in self.flotantes.items():
             L.append(f'{etq} DQ {v:.17e}')
         for lex, etq in self.cadenas.items():
-            texto = lex[1:-1].encode('cp1252', 'replace')
-            L.append(f'{etq} DB ' + ','.join(str(b) for b in texto) + (',' if texto else '') + '0')
+            texto = lex[1:-1].encode('cp1252', 'replace') + b'\x00'   # incluye el terminador
+            for k in range(0, len(texto), 16):
+                trozo = ','.join(str(b) for b in texto[k:k + 16])
+                prefijo = f'{etq} ' if k == 0 else '    '
+                L.append(f'{prefijo}DB {trozo}')
         L += ['', '.code', 'start:', '    finit']
         L += self.codigo
         L += ['end start', '']

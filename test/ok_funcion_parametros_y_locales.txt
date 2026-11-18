@@ -1,0 +1,21 @@
+prueba
+
+{{ Dos parametros de distinto tipo y una variable local.
+   Esperado: 3 (1 + toui(2.7)) }}
+
+uinteger x, res;
+doublef y;
+
+uinteger function suma_entera(uinteger a, doublef b)
+uinteger aux;
+begin
+    aux := toui(b);
+    ret(a + aux);
+end;
+
+BEGIN
+    x := 1$ui;
+    y := 2.7;
+    res := suma_entera(x, y);
+    pout(res);
+END

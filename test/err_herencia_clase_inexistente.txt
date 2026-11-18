@@ -1,0 +1,11 @@
+prueba
+
+class derivada
+begin
+    uinteger y;
+    extends fantasma;
+end;
+
+BEGIN
+    pout({fin});
+END

@@ -1,0 +1,18 @@
+prueba
+
+{{ Esperado: 9, 3, 18 y 2 }}
+
+uinteger a, b, r;
+
+BEGIN
+    a := 6$ui;
+    b := 3$ui;
+    r := a + b;
+    pout(r);
+    r := a - b;
+    pout(r);
+    r := a * b;
+    pout(r);
+    r := a / b;
+    pout(r);
+END

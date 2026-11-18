@@ -1,0 +1,15 @@
+prueba
+
+{{ Operadores ==, !=, < y >. Esperado: se imprimen los cuatro mensajes }}
+
+uinteger a, b, c;
+
+BEGIN
+    a := 3$ui;
+    b := 3$ui;
+    c := 5$ui;
+    if (a == b) pout({igual}); end_if;
+    if (a != c) pout({distinto}); end_if;
+    if (a < c) pout({menor}); end_if;
+    if (c > a) pout({mayor}); end_if;
+END

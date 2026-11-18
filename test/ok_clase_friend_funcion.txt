@@ -1,0 +1,25 @@
+prueba
+
+{{ funcion_amiga puede acceder al atributo private. Esperado: 100 }}
+
+uinteger res;
+
+class clase_a
+begin
+    private uinteger secreto;
+    friend funcion_amiga;
+end;
+
+clase_a ca;
+
+uinteger function funcion_amiga(uinteger oblig)
+begin
+    ca.secreto := 100$ui;
+    pout(ca.secreto);
+    ret(0$ui);
+end;
+
+BEGIN
+    res := funcion_amiga(0$ui);
+    pout(res);
+END

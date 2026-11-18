@@ -1,0 +1,15 @@
+prueba
+
+class c
+begin
+    uinteger x;
+end;
+
+class c
+begin
+    uinteger y;
+end;
+
+BEGIN
+    pout({fin});
+END

@@ -1,0 +1,5 @@
+prueba
+
+BEGIN
+    z := 1$ui;
+END

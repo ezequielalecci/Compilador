@@ -1,0 +1,13 @@
+prueba
+
+{{ comentario de una linea }}
+
+uinteger a;
+
+BEGIN
+    {{ comentario que
+       ocupa varias
+       lineas }}
+    a := 1$ui;
+    pout(a);
+END

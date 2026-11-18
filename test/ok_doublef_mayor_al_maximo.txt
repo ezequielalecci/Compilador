@@ -1,0 +1,10 @@
+prueba
+
+{{ 1.8d308 supera el maximo de doublef }}
+
+doublef k;
+
+BEGIN
+    k := 1.8d308;
+    pout(k);
+END

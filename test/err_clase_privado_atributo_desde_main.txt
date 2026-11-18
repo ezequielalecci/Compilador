@@ -1,0 +1,12 @@
+prueba
+
+class clase_a
+begin
+    private uinteger x1;
+end;
+
+clase_a ca;
+
+BEGIN
+    ca.x1 := 1$ui;
+END

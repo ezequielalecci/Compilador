@@ -1,0 +1,27 @@
+prueba
+
+{{ 'aparte' no fue declarada amiga de clase_a }}
+
+uinteger res;
+
+class clase_a
+begin
+    private uinteger x1;
+end;
+
+clase_a ca;
+
+class aparte
+begin
+    uinteger function intento()
+    begin
+        ca.x1 := 1$ui;
+        ret(0$ui);
+    end;
+end;
+
+aparte apar;
+
+BEGIN
+    res := apar.intento();
+END

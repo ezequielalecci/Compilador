@@ -304,3 +304,95 @@ BEGIN
     pout(o.j);
 END
 '''
+
+PROGRAMA = '''
+prueba
+
+uinteger x, res;
+
+function hace_algo(uinteger x2)
+begin
+    pout({valor que llego de x2 desde por copia a hace algo: });
+    pout(x2);
+    x2 := 100$ui;
+    pout({valor de x2 modificado desde hace algo:});
+    pout(x2);
+end;
+
+uinteger function por_copia(uinteger x)
+begin
+    pout({valor que llega desde main a por copia:});
+    pout(x);
+    x := 50$ui;
+    pout({valor de x modificado desde por copia:});
+    pout(x);
+    hace_algo(x);
+    pout({valor de x que llego a por copia despues de ejecutar hace algo:});
+    pout(x);
+    ret(0$ui);
+end;
+
+BEGIN
+    x := 1$ui;
+    pout({valor de x desde main:});
+    pout(x);
+    res := por_copia(x);
+    pout({valor final de x al finalizar las funciones:});
+    pout(x);
+END
+'''
+
+PROGRAMA = '''
+prueba_asig
+
+uinteger a, b, c, d, e;
+doublef x, y;
+
+BEGIN
+    b := 2$ui;
+    c := 3$ui;
+    d := 4$ui;
+    e := 5$ui;
+
+    a := b=(7$ui);
+    pout({test 1: a y b valen 7});
+    pout(a);
+    pout(b);
+
+    a := b + c=(4$ui);
+    pout({test 2: a vale 11, c vale 4});
+    pout(a);
+    pout(c);
+
+    a := b=(c+d)*e=(c/3$ui);
+    pout({test 3: a vale 8, b vale 8, e vale 1});
+    pout(a);
+    pout(b);
+    pout(e);
+
+    a := d=(1$ui) + 1$ui;
+    pout({test 4: a vale 2, d vale 1});
+    pout(a);
+    pout(d);
+
+    if (a=(3$ui)==3$ui)
+        pout({test 5: ok});
+    else
+        pout({test 5: MAL});
+    end_if;
+
+    if (a=(b)!=3$ui)
+        pout({test 6: ok, a vale 8});
+    else
+        pout({test 6: MAL});
+    end_if;
+
+    x := 2.5;
+    if (y=(x*2.0)==5.0)
+        pout({test 7: ok, y vale 5});
+    else
+        pout({test 7: MAL});
+    end_if;
+    pout(y);
+END
+'''

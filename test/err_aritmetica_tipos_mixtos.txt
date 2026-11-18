@@ -1,0 +1,12 @@
+prueba
+
+{{ no se puede operar uinteger con doublef sin conversion }}
+
+uinteger a, r;
+doublef x;
+
+BEGIN
+    a := 1$ui;
+    x := 2.5;
+    r := a + x;
+END

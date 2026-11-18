@@ -1,0 +1,16 @@
+prueba
+
+{{ la funcion es uinteger pero retorna un doublef }}
+
+doublef d;
+uinteger res;
+
+uinteger function mal()
+begin
+    d := 1.5;
+    ret(d);
+end;
+
+BEGIN
+    res := mal();
+END

@@ -1,0 +1,14 @@
+prueba
+
+{{ Esperado: mayor que 3 }}
+
+uinteger a;
+
+BEGIN
+    a := 5$ui;
+    if (a > 3$ui)
+        pout({mayor que 3});
+    else
+        pout({menor o igual que 3});
+    end_if;
+END

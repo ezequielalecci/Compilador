@@ -1,0 +1,12 @@
+prueba
+
+{{ Constantes que empiezan con punto, con y sin exponente }}
+
+doublef c, d;
+
+BEGIN
+    c := .6;
+    d := .2d34;
+    pout(c);
+    pout(d);
+END

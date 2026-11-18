@@ -1,0 +1,12 @@
+prueba
+
+{{ Esperado: 2 (parte entera de 2.7) }}
+
+uinteger a;
+doublef x;
+
+BEGIN
+    x := 2.7;
+    a := toui(x);
+    pout(a);
+END

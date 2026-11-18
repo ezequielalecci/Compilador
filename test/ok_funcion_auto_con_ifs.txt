@@ -1,0 +1,30 @@
+prueba
+
+{{ Funcion auto con ret en distintas ramas.
+   Esperado: 2.0, 2 (entra por la rama a<aux) y luego 1 }}
+
+uinteger x, res;
+doublef y;
+
+auto function prueba_ifs(uinteger a, doublef b)
+uinteger aux;
+begin
+    pout(b);
+    aux := toui(b);
+
+    if (a > aux) ret(a);
+    else
+        begin
+            if (a < aux) ret(b);
+            else pout({iguales});
+            end_if;
+        end
+    end_if;
+end;
+
+BEGIN
+    x := 1$ui;
+    y := 2.0;
+    res := toui(prueba_ifs(x, y));
+    pout(res);
+END

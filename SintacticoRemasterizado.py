@@ -66,7 +66,6 @@ class AnalizadorSintactico(Parser):
             return 0
 
     precedence = (
-        ('right', 'ASSIGN'),
         ('left', 'PLUS', 'MINUS'),
         ('left', 'TIMES', 'DIVIDE'),
         ('right', 'UMINUS'),
@@ -141,6 +140,11 @@ class AnalizadorSintactico(Parser):
     # ------------------------------------------------------------------
     # [PASO 3] FUNCIONES
     # ------------------------------------------------------------------
+    def _falta_parametro(self, tipo, nombre, linea):
+        self.gen.errores.semantico(
+            linea, f"{tipo} '{nombre}' debe tener al menos un parámetro.")
+
+    # --- originales (sin cambios) ---
     @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
     def cabecera_funcion(self, p):
         self.gen.iniciar_funcion_decl(p.tipo_dato, p.ID, p.lista_parametros, self._linea(p))
@@ -154,6 +158,25 @@ class AnalizadorSintactico(Parser):
     @_('AUTO FUNCTION ID "(" lista_parametros ")"')
     def cabecera_auto(self, p):
         self.gen.iniciar_funcion_decl('AUTO', p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
+
+    # --- nuevas (caso "()" sin parámetros: error semántico, pero se abre la función igual) ---
+    @_('tipo_dato FUNCTION ID "(" ")"')
+    def cabecera_funcion(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl(p.tipo_dato, p.ID, [], self._linea(p))
+        return p.ID
+
+    @_('FUNCTION ID "(" ")"')
+    def cabecera_funcion(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl(VOID, p.ID, [], self._linea(p))
+        return p.ID
+
+    @_('AUTO FUNCTION ID "(" ")"')
+    def cabecera_auto(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl('AUTO', p.ID, [], self._linea(p))
         return p.ID
 
     # Funciones normales / void: el 'ret' es opcional (bloque_obligatorio no lo exige).
@@ -213,6 +236,11 @@ class AnalizadorSintactico(Parser):
     @_('tipo_dato ID ";"')
     def atributo_publico(self, p):
         return self.gen.declarar_atributo(p.tipo_dato, p.ID, visibilidad='public', linea=self._linea(p))
+    
+    @_('tipo_dato FUNCTION ID "(" ")"')
+    def cabecera_metodo(self, p):
+        self._falta_parametro('el método', p.ID, self._linea(p))
+        return self.gen.iniciar_metodo(p.tipo_dato, p.ID, [], self._linea(p))
 
     @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
     def cabecera_metodo(self, p):
@@ -248,10 +276,6 @@ class AnalizadorSintactico(Parser):
     @_('ID')
     def lista_ids(self, p):
         return [p.ID]
-
-    @_('')
-    def lista_parametros(self, p):
-        return []
 
     @_('parametro "," lista_parametros')
     def lista_parametros(self, p):
@@ -447,10 +471,6 @@ class AnalizadorSintactico(Parser):
     def expresion(self, p):
         return p.termino
 
-    @_('ref_variable ASSIGN expresion')
-    def expresion(self, p):
-        return self.gen.asignacion(p.ref_variable, p.expresion, self._linea(p))
-
     @_('DOUBLEF', 'UINTEGER', 'ID')
     def tipo_dato(self, p):
         return p[0]
@@ -474,6 +494,10 @@ class AnalizadorSintactico(Parser):
     @_('invocacion_metodo_objeto')
     def factor(self, p):
         return p.invocacion_metodo_objeto
+    
+    @_('ref_variable ASSIGN factor')
+    def factor(self, p):
+        return self.gen.asignacion(p.ref_variable, p.factor, self._linea(p))
 
     @_('ref_variable')
     def factor(self, p):

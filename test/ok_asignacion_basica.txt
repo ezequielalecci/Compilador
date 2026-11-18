@@ -1,0 +1,13 @@
+prueba
+
+{{ Esperado: 5 y 2.7 }}
+
+uinteger a;
+doublef x;
+
+BEGIN
+    a := 5$ui;
+    x := 2.7;
+    pout(a);
+    pout(x);
+END

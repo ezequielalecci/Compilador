@@ -1,0 +1,38 @@
+prueba
+
+{{ ca hereda de cc, que hereda de cb y cd. Esperado: 1, 2, 3 y 4 }}
+
+class cd
+begin
+    uinteger j;
+end;
+
+class cb
+begin
+    uinteger x;
+end;
+
+class cc
+begin
+    uinteger y;
+    extends cb, cd;
+end;
+
+class ca
+begin
+    uinteger z;
+    extends cc;
+end;
+
+ca o;
+
+BEGIN
+    o.x := 1$ui;
+    o.y := 2$ui;
+    o.z := 3$ui;
+    o.j := 4$ui;
+    pout(o.x);
+    pout(o.y);
+    pout(o.z);
+    pout(o.j);
+END

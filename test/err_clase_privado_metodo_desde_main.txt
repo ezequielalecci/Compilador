@@ -1,0 +1,17 @@
+prueba
+
+uinteger res;
+
+class clase_a
+begin
+    private uinteger function privado()
+    begin
+        ret(100$ui);
+    end;
+end;
+
+clase_a ca;
+
+BEGIN
+    res := ca.privado();
+END

@@ -1,0 +1,18 @@
+prueba
+
+{{ Esperado: menor }}
+
+uinteger a, b;
+
+BEGIN
+    a := 1$ui;
+    b := 2$ui;
+    if (a > b) pout({mayor});
+    else
+        begin
+            if (a < b) pout({menor});
+            else pout({iguales});
+            end_if;
+        end
+    end_if;
+END

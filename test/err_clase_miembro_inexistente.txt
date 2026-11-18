@@ -1,0 +1,12 @@
+prueba
+
+class caja
+begin
+    uinteger valor;
+end;
+
+caja c;
+
+BEGIN
+    c.noexiste := 1$ui;
+END

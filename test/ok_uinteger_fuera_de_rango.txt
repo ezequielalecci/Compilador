@@ -1,0 +1,10 @@
+prueba
+
+{{ 70000 supera el maximo de uinteger (65535) }}
+
+uinteger a;
+
+BEGIN
+    a := 70000$ui;
+    pout(a);
+END

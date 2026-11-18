@@ -1,0 +1,29 @@
+prueba
+
+{{ clase_amiga puede acceder al atributo private de clase_a. Esperado: 7 }}
+
+uinteger res;
+
+class clase_a
+begin
+    private uinteger x1;
+    friend clase_amiga;
+end;
+
+clase_a ca;
+
+class clase_amiga
+begin
+    uinteger function probar(uinteger param_oblig)
+    begin
+        ca.x1 := 7$ui;
+        pout(ca.x1);
+        ret(0$ui);
+    end;
+end;
+
+clase_amiga amiga;
+
+BEGIN
+    res := amiga.probar(0$ui);
+END

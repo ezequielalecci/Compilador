@@ -1,0 +1,15 @@
+prueba_uinteger
+
+{{ Literales uinteger validos, incluidos los limites 0 y 65535.
+   Esperado: 0, 30 y 65535 }}
+
+uinteger a, b, c;
+
+BEGIN
+    a := 0$ui;
+    b := 30$ui;
+    c := 65535$ui;
+    pout(a);
+    pout(b);
+    pout(c);
+END

@@ -1,0 +1,11 @@
+prueba
+
+uinteger a;
+
+BEGIN
+    a := 1$ui;
+    if (a == 1$ui)
+        pout({uno});
+    else
+        pout({otro});
+END
