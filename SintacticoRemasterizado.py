@@ -13,6 +13,15 @@ REGISTRO DE CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR (marcados con [PASO 3] / [P
   - invocacion_funcion emite ARG / CALL y devuelve el Operando del CALL.
     Ya no se devuelve ERR en 'factor'.
   - sentencia_retorno emite el terceto RET y devuelve None (antes devolvía un dict).
+[PASO 3 - AUTO / RETORNOS]
+  - 'bloque_auto' ahora es  BEGIN sentencias_ejecutables END  (igual que bloque_obligatorio).
+    Antes exigía un 'ret' como última sentencia de nivel superior, lo que impedía tener
+    'ret' solo dentro de un IF/WHILE y rechazaba funciones válidas.
+  - Se eliminaron las reglas de 'sentencias_no_retorno' (quedaron sin uso).
+  - El chequeo de "al menos un ret" en funciones AUTO, el tipo de retorno más abarcativo
+    y el retorno por defecto de las funciones sin 'ret' se resuelven en el generador
+    (finalizar_funcion_decl), no en la gramática.
+  - Las funciones normales / void siguen sin exigir 'ret' (bloque_obligatorio).
 [PASO 5] CLASES, MÉTODOS Y '.'
   - Los métodos usan 'cabecera_metodo' (misma idea que las funciones), así su cuerpo se
     compila en su propia unidad y NO ensucia el código de main.
@@ -44,6 +53,7 @@ MOSTRAR_AST = False
 class AnalizadorSintactico(Parser):
     tokens = AnalizadorLexico.tokens
     start = 'programa'
+    # debugfile = 'parser.out'   # descomentar para regenerar parser.out y revisar conflictos
 
     def __init__(self, tabla_simbolos, generador):
         self.tabla = tabla_simbolos
@@ -146,11 +156,14 @@ class AnalizadorSintactico(Parser):
         self.gen.iniciar_funcion_decl('AUTO', p.ID, p.lista_parametros, self._linea(p))
         return p.ID
 
+    # Funciones normales / void: el 'ret' es opcional (bloque_obligatorio no lo exige).
     @_('cabecera_funcion bloque_declarativo bloque_obligatorio ";"')
     def declaracion_funcion(self, p):
         self.gen.finalizar_funcion_decl(self._linea(p))
         return None
 
+    # Funciones AUTO: la gramática admite 'ret' en cualquier posición (incluso anidado);
+    # la exigencia de al menos un 'ret' se valida en el generador.
     @_('cabecera_auto bloque_declarativo bloque_auto ";"')
     def declaracion_funcion(self, p):
         self.gen.finalizar_funcion_decl(self._linea(p))
@@ -163,11 +176,6 @@ class AnalizadorSintactico(Parser):
     def inicio_clase(self, p):
         self.gen.iniciar_clase(p.ID, self._linea(p))
         return p.ID
-
-    @_('CLASS ID EXTENDS ID')
-    def inicio_clase(self, p):
-        self.gen.iniciar_clase(p.ID0, self._linea(p), clase_padre=p.ID1)
-        return p.ID0
 
     @_('inicio_clase BEGIN cuerpo_clase END ";"')
     def declaracion_clase(self, p):
@@ -192,7 +200,8 @@ class AnalizadorSintactico(Parser):
         'atributo_publico',
         'metodo_privado',
         'metodo_publico',
-        'declaracion_friend'
+        'declaracion_friend',
+        'declaracion_extends'
     )
     def miembro_clase(self, p):
         return p[0]
@@ -217,6 +226,11 @@ class AnalizadorSintactico(Parser):
     @_('cabecera_metodo bloque_declarativo bloque_obligatorio ";"')
     def metodo_publico(self, p):
         self.gen.finalizar_metodo(p.cabecera_metodo, 'public', self._linea(p))
+        return None
+
+    @_('EXTENDS lista_ids ";"')
+    def declaracion_extends(self, p):
+        self.gen.registrar_herencia(p.lista_ids, self._linea(p))
         return None
 
     @_('FRIEND ID ";"')
@@ -254,6 +268,14 @@ class AnalizadorSintactico(Parser):
             'id': p.ID
         }
 
+    @_('COMPTIME tipo_dato ID')
+    def parametro(self, p):
+        return {
+            'tipo_dato': p.tipo_dato,
+            'id': p.ID,
+            'comptime': True
+        }
+
     @_('sentencia ";" sentencias_ejecutables')
     def sentencias_ejecutables(self, p):
         return [p.sentencia] + p.sentencias_ejecutables
@@ -264,6 +286,12 @@ class AnalizadorSintactico(Parser):
 
     @_('BEGIN sentencias_ejecutables END')
     def bloque_obligatorio(self, p):
+        return p.sentencias_ejecutables
+
+    # [PASO 3 - AUTO] Cuerpo de una función AUTO: mismas sentencias que un bloque común
+    # ('ret' permitido en cualquier lugar, incluso dentro de IF / WHILE).
+    @_('BEGIN sentencias_ejecutables END')
+    def bloque_auto(self, p):
         return p.sentencias_ejecutables
 
     @_('bloque_obligatorio')
@@ -285,25 +313,9 @@ class AnalizadorSintactico(Parser):
     def sentencia_no_retorno(self, p):
         return p[0]
 
-    @_('sentencia_no_retorno ";" sentencias_no_retorno')
-    def sentencias_no_retorno(self, p):
-        return [p.sentencia_no_retorno] + p.sentencias_no_retorno
-
-    @_('sentencia_no_retorno ";"')
-    def sentencias_no_retorno(self, p):
-        return [p.sentencia_no_retorno]
-
     @_('sentencia_no_retorno', 'sentencia_retorno')
     def sentencia(self, p):
         return p[0]
-
-    @_('BEGIN sentencias_no_retorno sentencia_retorno ";" END')
-    def bloque_auto(self, p):
-        return None
-
-    @_('BEGIN sentencia_retorno ";" END')
-    def bloque_auto(self, p):
-        return None
 
     @_('IF "(" condicion ")"')
     def inicio_if(self, p):

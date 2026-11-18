@@ -1,15 +1,15 @@
-# Entornos virtuales
+
+__pycache__/
+*.pyc
 venv/
 .venv/
 
-# Archivos Python compilados
-__pycache__/
-*.py[cod]
+# Generados por SLY
+parser.out
+parsetab.py
 
-# Configuración de IDE
-.vscode/
-.idea/
-
-# Archivos del sistema
-.DS_Store
-Thumbs.dbS
+# Salida del compilador / ensamblador
+salida.asm
+salida.obj
+salida.exe
+EOF

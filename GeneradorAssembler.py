@@ -158,6 +158,17 @@ class GeneradorAssembler:
         self.e('ja _err_conv')                  # negativo (como sin signo es enorme) o > 65535
         self.e(f'mov {d}, ax')
 
+    def _conv(self, uid, i, t):
+        """UINTEGER -> DOUBLEF (conversion implicita de los 'ret' de funciones AUTO)."""
+        a, _, clase = self._op(t.a1, uid)
+        if clase == 'imm':
+            self.e(f'mov eax, {a}')
+        else:
+            self.e(f'movzx eax, WORD PTR {a}')
+        self.e('mov _conv32, eax')
+        self.e('fild DWORD PTR _conv32')
+        self.e(f'fstp {self._aux(uid, i)}')
+
     def _asignacion(self, uid, t):
         dst, td, _ = self._op(t.a1, uid)
         src, _, _ = self._op(t.a2, uid)
@@ -232,6 +243,10 @@ class GeneradorAssembler:
                 self._comparacion(uid, t)
             elif t.op == 'TOUI':
                 self._toui(uid, i, t)
+            elif t.op == 'CONV':
+                self._conv(uid, i, t)
+            elif t.op == 'NOP':
+                pass
             elif t.op == ':=':
                 self._asignacion(uid, t)
             elif t.op == 'POUT':
@@ -295,7 +310,7 @@ class GeneradorAssembler:
         # auxiliares
         for uid, u in enumerate(self.unidades):
             for i, t in enumerate(u.tercetos):
-                if (t.op in ARIT or t.op in ('NEG', 'TOUI')
+                if (t.op in ARIT or t.op in ('NEG', 'TOUI', 'CONV')
                         or (t.op == 'CALL' and t.tipo in (UINTEGER, DOUBLEF))):
                     L.append(f'{self._aux(uid, i)} ' + ('DW 0' if t.tipo == UINTEGER else 'DQ 0.0'))
         for lex, (etq, v) in self.flotantes.items():

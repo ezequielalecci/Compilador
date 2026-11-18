@@ -16,16 +16,12 @@ from AnalizadorLexico import AnalizadorLexico
 from CodigoIntermedio import (GeneradorCodigo, GestorAmbitos, Errores, TablaSimbolosSemantica)
 from GeneradorAssembler import GeneradorAssembler
 
-# ----------------------------------------------------------------------------
-# PEGÁ ACÁ TU PROGRAMA DE PRUEBA
-# ----------------------------------------------------------------------------
-
 
 PROGRAMA = '''
 prueba
 
-uinteger x, res;
-doublef y;
+uinteger x;
+doublef y, res;
 
 auto function prueba_ifs(uinteger a, doublef b)
 uinteger aux;
@@ -41,18 +37,15 @@ begin
             end_if;
         end
     end_if;
-    ret(0.0);
 end;
 
 BEGIN
     x := 1$ui;
-    y := 0.0;
-    res := toui(prueba_ifs(x, y));
+    y := 1.5;
+    res := prueba_ifs(x, y);
     pout(res);
 END
 '''
-
-
 
 def compilar(codigo, salida_asm='salida.asm'):
     sintactico.MOSTRAR_AST = False

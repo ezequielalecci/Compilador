@@ -139,3 +139,168 @@ BEGIN
     pout(t.fijo);
 END
 '''
+
+PROGRAMA = '''
+prueba
+
+uinteger x, res;
+doublef y;
+
+auto function prueba_ifs(uinteger a, doublef b)
+uinteger aux;
+begin
+    pout(b);
+    aux := toui(b);
+    
+    if (a > aux) ret(a);
+    else 
+        begin
+            if (a < aux) ret(b);
+            else pout({iguales});
+            end_if;
+        end
+    end_if;
+end;
+
+BEGIN
+    x := 1$ui;
+    y := 2.0;
+    res := toui(prueba_ifs(x, y));
+    pout(res);
+END
+'''
+
+PROGRAMA = '''
+prueba
+
+uinteger b, res;
+
+auto function comparar(uinteger b)
+uinteger a;
+begin
+    if (a=3$ui==b) ret(1$ui);
+    else ret(2$ui);
+    end_if;
+end;
+
+BEGIN    
+    b := 3$ui;
+    res := comparar(b);
+    pout(res);
+END
+'''
+
+PROGRAMA = '''
+prueba
+
+comptime uinteger x;
+uinteger z;
+
+BEGIN    
+    x := 3$ui;
+    while (x<10$ui) repeat
+    begin
+        x := x + 1$ui;
+        pout(x);
+    end;
+END
+'''
+
+PROGRAMA = '''
+prueba
+
+class clase_a
+begin
+    private uinteger x1;
+
+    uinteger function setx1(uinteger a)
+    begin
+        x1 := a;
+    end;
+
+    private uinteger function privado()
+    begin
+        ret(100$ui);
+    end;
+
+    friend clase_amiga;
+    friend funcion_amiga;
+
+end;
+
+clase_a ca;
+
+class clase_amiga
+begin
+    uinteger function leer()
+    begin
+        pout(ca.x1);
+    end;
+end;
+
+uinteger function funcion_amiga()
+uinteger res;
+begin
+    res := ca.privado();
+    pout(res);
+end;
+
+clase_amiga amiga;
+
+{{class aparte
+begin
+    uinteger function intento()
+    uinteger aux;
+    begin
+        aux := ca.privado();
+    end;
+end;
+
+aparte apar;}}
+
+BEGIN
+    ca.setx1(1$ui);
+    amiga.leer();
+    funcion_amiga();
+    {{apar.intento();}}
+END
+'''
+
+PROGRAMA = '''
+prueba
+
+class cd
+begin
+    uinteger j;
+end;
+
+class cb
+begin
+    uinteger x;
+end;
+
+class cc
+begin
+    uinteger y;
+    extends cb, cd;
+end;
+
+class ca
+begin
+    uinteger z;
+    extends cc;
+end;
+
+ca o;
+
+BEGIN
+    o.x := 1$ui;
+    o.y := 2$ui;
+    o.z := 3$ui;
+    o.j := 4$ui;
+    pout(o.x);
+    pout(o.y);
+    pout(o.z);
+    pout(o.j);
+END
+'''

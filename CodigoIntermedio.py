@@ -70,9 +70,14 @@ ERROR = 'ERROR'         # tipo interno: evita errores en cascada
 VOID = 'VOID'           # tipo de retorno de las funciones sin tipo
 TIPOS_BASICOS = {UINTEGER, DOUBLEF}
 MAX_UI = 65535
+ARIT_OPS = {'+', '-', '*', '/'}
 
 # Asignar entero a flotante sin conversión sigue sin permitirse.
 PERMITE_ENTERO_A_FLOAT = False
+
+JERARQUIA = {UINTEGER: 0, DOUBLEF: 1}   # el mayor es el más abarcativo
+
+VALOR_DEFECTO = {UINTEGER: '0$ui', DOUBLEF: '0.0'}
 
 
 # ----------------------------------------------------------------------------
@@ -212,19 +217,38 @@ class GestorAmbitos:
         if self.tabla.buscar(nombre_clase, token='CLASS') is not None:
             self.errores.semantico(linea, f"la clase '{nombre_clase}' ya está declarada.")
         else:
-            if clase_padre is not None and self.tabla.buscar(clase_padre, token='CLASS') is None:
-                self.errores.semantico(linea, f"la clase base '{clase_padre}' no está declarada.")
-                clase_padre = None
             self.tabla.registrar(
                 nombre_clase,
                 'CLASS',
                 uso='clase',
                 ambito='global',
                 amigos=set(),
-                padre=clase_padre
+                padres=[]                  # [HERENCIA MÚLTIPLE] se completa con 'extends' en el cuerpo
             )
         self.clase_actual = nombre_clase
         self.entrar(nombre_clase)          # [PASO 5] la clase es un ámbito más
+        if clase_padre is not None:        # compatibilidad con la forma 'class b extends a'
+            self.registrar_herencia([clase_padre], linea)
+
+    def registrar_herencia(self, nombres, linea):
+        """[HERENCIA MÚLTIPLE] 'extends cb, cc, cd;' dentro del cuerpo de la clase actual.
+        Cada base debe estar declarada, no puede ser la propia clase ni repetirse."""
+        if not self.clase_actual:
+            self.errores.semantico(linea, "la declaración 'extends' debe estar dentro del cuerpo de una clase.")
+            return
+        info_clase = self.tabla.buscar(self.clase_actual, token='CLASS')
+        if info_clase is None:
+            return
+        padres = info_clase.setdefault('padres', [])
+        for nombre in nombres:
+            if nombre == self.clase_actual:
+                self.errores.semantico(linea, f"la clase '{nombre}' no puede heredar de sí misma.")
+            elif self.tabla.buscar(nombre, token='CLASS') is None:
+                self.errores.semantico(linea, f"la clase base '{nombre}' no está declarada.")
+            elif nombre in padres:
+                self.errores.semantico(linea, f"la clase base '{nombre}' está repetida en 'extends'.")
+            else:
+                padres.append(nombre)
 
     def registrar_amigo(self, nombre_amigo, linea):
         if self.clase_actual:
@@ -264,13 +288,20 @@ class GestorAmbitos:
         return nombre_interno
 
     def cadena_de_clases(self, clase):
-        """[clase, padre, abuela, ...]"""
-        cadena, c = [], clase
-        while c and c not in cadena:
-            cadena.append(c)
+        """[clase, y todos sus ancestros] sin repetidos (primero en profundidad).
+        Con herencia múltiple un ancestro común (rombo) aparece una sola vez."""
+        resultado = []
+
+        def visitar(c):
+            if c in resultado:
+                return
+            resultado.append(c)
             info = self.tabla.buscar(c, token='CLASS')
-            c = info.get('padre') if info else None
-        return cadena
+            for p in (info.get('padres', []) if info else []):
+                visitar(p)
+
+        visitar(clase)
+        return resultado
 
     def buscar_miembros(self, clase, nombre_miembro):
         """Búsqueda SILENCIOSA: [(clase_propietaria, info)] en toda la jerarquía."""
@@ -376,6 +407,14 @@ class UnidadCodigo:
         else:               # BF
             t.a2 = destino
 
+    def reemplazar(self, idx, op, a1=None, a2=None, tipo=None):
+        t = self.tercetos[idx]
+        t.op, t.a1, t.a2, t.tipo = op, a1, a2, tipo
+
+    def ref(self, idx):
+        # una referencia a un terceto es el propio índice (int); _fmt lo imprime como [n]
+        return idx
+
     def imprimir(self):
         print(f"\n=== Código intermedio: {self.nombre} ===")
         for i, t in enumerate(self.tercetos):
@@ -407,6 +446,9 @@ class GeneradorCodigo:
         self.terminadas = []        # unidades de funciones ya cerradas
         self.pila_control = []      # saltos pendientes de completar (if / while)
         self.pila_funciones = []    # contexto de la función que se está compilando
+        self.nivel_while = 0        # [COMPTIME] cantidad de WHILE abiertos (condición incluida)
+        self.ct_modificadas = set() # [COMPTIME] comptime modificadas dentro de un WHILE
+        self.pila_dinamica = []     # [COMPTIME] por cada if/while abierto: True si su condición NO es estática
 
     @property
     def unidad(self) -> UnidadCodigo:
@@ -425,8 +467,12 @@ class GeneradorCodigo:
             self.errores.semantico(linea, f"'{nombre}' es {info.get('uso')} y se usa como variable.")
             return ERR
 
-        if info.get('comptime'):
+        if info.get('comptime') and info.get('uso') != 'parametro':
             valor_constante = self.ambitos.obtener_valor_comptime(mangleado)
+            # Dentro de un WHILE el valor cambia en cada vuelta: si se reemplazara por el
+            # valor del momento de compilación, el ciclo no terminaría nunca. Se usa la variable.
+            if self.nivel_while > 0 and (valor_constante is not None or mangleado in self.ct_modificadas):
+                return Operando(mangleado, info['tipo'])
             if valor_constante is not None:
                 return valor_constante
             self.errores.semantico(linea, f"La variable COMPTIME '{nombre}' se usa antes de que se le asigne un valor conocido en compilación.")
@@ -593,6 +639,30 @@ class GeneradorCodigo:
             return ERR
         return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER, True)
 
+    def _es_comptime_puro(self, ref) -> bool:
+        """[COMPTIME] La expresión solo depende de constantes y de variables COMPTIME."""
+        if isinstance(ref, int):
+            t = self.unidad.tercetos[ref]
+            if t.op in ARIT_OPS or t.op in ('NEG', 'TOUI', 'CONV'):
+                return self._es_comptime_puro(t.a1) and (t.a2 is None or self._es_comptime_puro(t.a2))
+            return False
+        if not isinstance(ref, str):
+            return False
+        if self._es_constante(ref):
+            return True
+        info = self.tabla.buscar(ref)
+        return bool(info and info.get('comptime'))
+
+    def _cond_estatica(self, cond) -> bool:
+        """[COMPTIME] La condición se puede resolver en compilación si ambos operandos de la
+        comparación son constantes (las variables COMPTIME ya fueron reemplazadas por su valor)."""
+        if cond.tipo == ERROR:
+            return True                      # el error ya fue informado: evitar cascada
+        if not isinstance(cond.ref, int):
+            return False
+        t = self.unidad.tercetos[cond.ref]
+        return self._es_comptime_puro(t.a1) and self._es_comptime_puro(t.a2)
+
     def _es_constante(self, ref) -> bool:
         return isinstance(ref, str) and (ref.endswith('$ui') or self.tabla.buscar(ref, 'FLOAT') is not None)
 
@@ -612,8 +682,19 @@ class GeneradorCodigo:
 
         # [PASO 4 - COMPTIME] Validación estricta y registro de valor estático
         info_destino = self.tabla.buscar(destino.ref)
-        if info_destino and info_destino.get('comptime'):
-            if self._es_constante(expr.ref):
+        if info_destino and info_destino.get('comptime') and info_destino.get('uso') != 'parametro':
+            if any(self.pila_dinamica):
+                self.errores.semantico(
+                    linea,
+                    f"La variable COMPTIME '{info_destino['lexema']}' no puede modificarse dentro de un IF/WHILE "
+                    f"cuya condición no se puede determinar en tiempo de compilación.")
+                return destino
+            if self.nivel_while > 0 and self._es_comptime_puro(expr.ref):
+                # dentro de un WHILE (de condición estática) el valor no se registra:
+                # la variable se maneja en ejecución y su valor queda desconocido al salir.
+                self.ambitos.valores_comptime.pop(destino.ref, None)
+                self.ct_modificadas.add(destino.ref)
+            elif self._es_constante(expr.ref):
                 self.ambitos.registrar_valor_comptime(destino.ref, expr, linea)
             else:
                 self.errores.semantico(
@@ -635,31 +716,63 @@ class GeneradorCodigo:
         lexema_ts = '{' + texto + '}'
         self.unidad.emitir('POUT', lexema_ts, None, 'CADENA')
 
+    def iniciar_funcion(self, nombre_mangleado, tipo_retorno):
+        self.pila_unidades.append(UnidadCodigo(nombre_mangleado))
+        self.pila_funciones.append({'nombre': nombre_mangleado, 'tipo': tipo_retorno,
+                                    'cant_ret': 0, 'rets': []})   # [(idx_terceto, tipo)]
+
     def retorno(self, expr, linea):
         if not self.pila_funciones:
             self.errores.semantico(linea, "'ret' fuera de una función.")
             return
         f = self.pila_funciones[-1]
         f['cant_ret'] += 1
-        if expr.tipo != ERROR:
-            if f['tipo'] == 'AUTO':
-                f['tipos_ret'].append(expr.tipo)       # el tipo final se resuelve al cerrar la función
-            elif f['tipo'] != ERROR and f['tipo'] != expr.tipo:
-                self.errores.semantico(linea, f"'ret' devuelve {expr.tipo} pero la función '{f['nombre']}' devuelve {f['tipo']}.")
+        if expr.tipo == ERROR:
+            return
+        if f['tipo'] == 'AUTO':
+            # placeholder: luego será CONV o NOP
+            idx_ph = self.unidad.emitir('NOP', expr.ref, None, expr.tipo)
+            idx_ret = self.unidad.emitir('RET', expr.ref, None, expr.tipo)
+            f['rets'].append((idx_ph, idx_ret, expr.ref, expr.tipo))
+        else:
             self.unidad.emitir('RET', expr.ref, None, expr.tipo)
-
-    # ---------------- funciones: una unidad de código por función [PASO 3] ----------------
-    def iniciar_funcion(self, nombre_mangleado, tipo_retorno):
-        self.pila_unidades.append(UnidadCodigo(nombre_mangleado))
-        self.pila_funciones.append({'nombre': nombre_mangleado, 'tipo': tipo_retorno,
-                                    'cant_ret': 0, 'tipos_ret': []})
+            if f['tipo'] != expr.tipo:
+                self.errores.semantico(linea,
+                    f"'ret' devuelve {expr.tipo} pero la función '{f['nombre']}' devuelve {f['tipo']}.")
 
     def finalizar_funcion(self, linea):
-        info = self.pila_funciones.pop()
-        if info['tipo'] == 'AUTO' and info['cant_ret'] == 0:
-            self.errores.semantico(linea, f"la función AUTO '{info['nombre']}' debe tener al menos un 'ret'.")
-        elif info['tipo'] in TIPOS_BASICOS and info['cant_ret'] == 0:
-            self.errores.semantico(linea, f"la función '{info['nombre']}' devuelve {info['tipo']} y no tiene ningún 'ret'.")
+        info = self.pila_funciones[-1]          # peek: todavía no se saca
+        tipo = info['tipo']
+
+        if tipo == 'AUTO':
+            info['auto'] = True
+            if info['rets']:
+                tipo = max((r[3] for r in info['rets']), key=JERARQUIA.get)
+                for idx_ph, idx_ret, ref, t in info['rets']:
+                    if t != tipo:
+                        # el placeholder pasa a ser la conversión UINTEGER -> DOUBLEF
+                        self.unidad.reemplazar(idx_ph, 'CONV', ref, None, tipo)
+                        # y el RET devuelve el resultado de la conversión
+                        self.unidad.reemplazar(idx_ret, 'RET', self.unidad.ref(idx_ph), None, tipo)
+                    else:
+                        # no hace falta convertir: el placeholder queda como NOP vacío
+                        self.unidad.reemplazar(idx_ph, 'NOP', None, None, None)
+            else:
+                if info['cant_ret'] == 0:
+                    self.errores.semantico(linea,
+                        f"La función AUTO '{info['nombre']}' debe tener al menos un 'ret'.")
+                tipo = ERROR                    # (si había 'ret' con error, ya fue informado)
+            info['tipo'] = tipo                 # tipo que verán las invocaciones
+
+        # retorno por defecto SIEMPRE (explícitas y AUTO resuelta)
+        if tipo in VALOR_DEFECTO:
+            if tipo == UINTEGER:
+                self.constante_ui(0)
+            else:
+                self.constante_float('0.0')
+            self.unidad.emitir('RET', VALOR_DEFECTO[tipo], None, tipo)
+
+        self.pila_funciones.pop()
         self.terminadas.append(self.pila_unidades.pop())
         return info
 
@@ -672,7 +785,8 @@ class GeneradorCodigo:
             if tipo not in TIPOS_BASICOS:
                 self.errores.semantico(linea, f"el parámetro '{prm['id']}' debe ser UINTEGER o DOUBLEF.")
                 tipo = ERROR
-            mang = self.ambitos.declarar(prm['id'], tipo, 'parametro', linea)
+            mang = self.ambitos.declarar(prm['id'], tipo, 'parametro', linea,
+                                         comptime=bool(prm.get('comptime')))
             resultado.append((mang or f"{prm['id']}:{self.ambitos.ambito_actual()}", tipo))
         return resultado
 
@@ -688,20 +802,19 @@ class GeneradorCodigo:
         self.ambitos.entrar(nombre)
         params = self._declarar_parametros(parametros, linea)
         if declarada:
-            self.tabla.registrar(mang, 'ID', parametros=params, unidad=mang)
+            self.tabla.registrar(mang, 'ID', parametros=params, unidad=mang,
+                                 ct_params=[bool(p.get('comptime')) for p in parametros])
         self.iniciar_funcion(mang, tipo_retorno)
         return mang
 
     def _resolver_tipo_auto(self, info, linea):
-        if info['tipo'] != 'AUTO':
+        """El tipo ya fue calculado en finalizar_funcion; acá se propaga a la TS
+        para que las invocaciones posteriores vean el tipo real y no 'AUTO'."""
+        if not info.get('auto'):
             return
-        tipos = set(info['tipos_ret'])
-        if len(tipos) > 1:
-            self.errores.semantico(linea, f"la función AUTO '{info['nombre']}' tiene 'ret' de tipos distintos: {sorted(tipos)}.")
-        nuevo = tipos.pop() if len(tipos) == 1 else ERROR
         simbolo = self.tabla.buscar(info['nombre'])
         if simbolo is not None:
-            simbolo['tipo'] = nuevo
+            simbolo['tipo'] = info['tipo']
 
     def finalizar_funcion_decl(self, linea):
         info = self.finalizar_funcion(linea)
@@ -717,7 +830,12 @@ class GeneradorCodigo:
             self.errores.semantico(linea, f"'{nombre}' espera {len(params)} argumento(s) y recibió {len(args)}.")
             return ERR
         ok = True
+        ct = info.get('ct_params') or []
         for i, (a, (_, tipo_param)) in enumerate(zip(args, params), 1):
+            if a.tipo == tipo_param and i <= len(ct) and ct[i - 1] and not self._es_constante(a.ref):
+                self.errores.semantico(linea, f"argumento {i} de '{nombre}': el parámetro es COMPTIME y el "
+                                              f"argumento debe ser un valor conocido en tiempo de compilación.")
+                ok = False
             if a.tipo != tipo_param:
                 extra = " Usar TOUI(...)." if tipo_param == UINTEGER and a.tipo == DOUBLEF else ""
                 self.errores.semantico(linea, f"argumento {i} de '{nombre}': se esperaba {tipo_param} y es {a.tipo}.{extra}")
@@ -831,6 +949,7 @@ class GeneradorCodigo:
         """TERMINA LA CONDICIÓN: 1) crea el BF incompleto  2) apila su número."""
         if cond.tipo not in (BOOL, ERROR):
             self.errores.semantico(linea, "la condición del IF debe ser una comparación.")
+        self.pila_dinamica.append(not self._cond_estatica(cond))
         bf = self.unidad.emitir('BF', cond.ref, None)
         self.pila_control.append(('BF', bf))
 
@@ -849,17 +968,21 @@ class GeneradorCodigo:
         if not self._tope_es('BF', 'BI'):
             return
         _, pendiente = self.pila_control.pop()
+        if self.pila_dinamica:
+            self.pila_dinamica.pop()
         self.unidad.completar_salto(pendiente, self.unidad.proximo())
 
     # ---------------- WHILE ... REPEAT (tema 11) ----------------
     def while_inicio(self):
         """ANTES DE LA CONDICIÓN: apila el número del terceto donde empieza."""
+        self.nivel_while += 1
         self.pila_control.append(('INICIO', self.unidad.proximo()))
 
     def while_condicion(self, cond, linea):
         """TERMINA LA CONDICIÓN: crea el BF incompleto y apila su número."""
         if cond.tipo not in (BOOL, ERROR):
             self.errores.semantico(linea, "la condición del WHILE debe ser una comparación.")
+        self.pila_dinamica.append(not self._cond_estatica(cond))
         bf = self.unidad.emitir('BF', cond.ref, None)
         self.pila_control.append(('BF', bf))
 
@@ -870,6 +993,11 @@ class GeneradorCodigo:
             return
         _, bf = self.pila_control.pop()
         _, inicio = self.pila_control.pop()
+        if self.pila_dinamica:
+            self.pila_dinamica.pop()
+        self.nivel_while -= 1
+        if self.nivel_while == 0:
+            self.ct_modificadas.clear()
         self.unidad.emitir('BI', inicio)
         self.unidad.completar_salto(bf, self.unidad.proximo())
 
@@ -891,6 +1019,9 @@ class GeneradorCodigo:
             self.errores.semantico(linea, f"el atributo '{nombre}' debe ser UINTEGER o DOUBLEF (no se soportan atributos de tipo clase).")
             tipo = ERROR
         return self.ambitos.declarar_miembro(tipo, nombre, 'variable', visibilidad, linea)
+
+    def registrar_herencia(self, nombres, linea):
+        return self.ambitos.registrar_herencia(nombres, linea)
 
     def registrar_amigo(self, nombre_amigo, linea):
         return self.ambitos.registrar_amigo(nombre_amigo, linea)
