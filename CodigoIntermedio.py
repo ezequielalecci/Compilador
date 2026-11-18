@@ -1,70 +1,9 @@
-"""
-CodigoIntermedio.py  -  TP3 (Grupo 19)  -  AVANCES 1 a 5
-
-Representación elegida: TERCETOS      ( operador , operando1 , operando2 )
-
-Temas del grupo:
-  - Tema  4 : UINTEGER (constantes $ui)
-  - Tema  8 : DOUBLEF
-  - Tema 11 : WHILE ... REPEAT
-  - Tema 18 : asignaciones con '=' dentro de expresiones (el valor es el LADO IZQUIERDO)
-  - Tema 21 : funciones AUTO
-  - Tema 22 : COMPTIME
-  - Tema 27 : friend / private
-  - Tema 28 : acceso con '.'
-  - Tema 32 : herencia (miembro ambiguo = error)
-  - Tema 34 : conversión explícita float -> entero (TOUI) y chequeo de tipos asociado
-
-=====================================================================================
-CAMBIOS RESPECTO DE LA VERSIÓN ANTERIOR  (marcados con [PASO 3] / [PASO 5] / [TP4] / [T34])
-=====================================================================================
-[PASO 3] FUNCIONES
-  - iniciar_funcion_decl / finalizar_funcion_decl: abren y cierran el ámbito de la función,
-    declaran los parámetros (uso 'parametro') y crean una UnidadCodigo por función.
-  - invocar_funcion: valida cantidad y tipos de argumentos y emite
-        ( ARG  , valor , parametro_mangleado )     uno por argumento
-        ( CALL , unidad_de_la_funcion , - )        tipo = tipo de retorno
-    El resultado de una llamada es el propio terceto CALL (Operando con ese número).
-  - Las funciones AUTO resuelven su tipo al cerrar la función (según sus 'ret').
-  - Una función con tipo y sin 'ret' da error. La recursión da error (el Assembler usa
-    variables estáticas para parámetros y locales).
-[PASO 5] CLASES, OBJETOS Y '.'
-  - Las clases abren un ámbito; dentro de un método, un nombre se busca primero entre los
-    parámetros/locales, luego entre los miembros de la clase (con herencia, ambigüedad y
-    private/friend) y luego en los ámbitos exteriores.
-  - Cada OBJETO (variable cuyo tipo es una clase) registra una copia de sus atributos con el
-    nombre   obj.atributo:ambito   (ver _instanciar_objeto). 'obj.x' se resuelve a ese símbolo.
-  - Los métodos se compilan como funciones (unidad 'Clase.metodo'). El cuerpo trabaja sobre
-    los atributos "plantilla" de la clase ('Clase.atributo'); al invocar obj.m(...) se copian
-    los atributos del objeto a la plantilla (antes del CALL) y de vuelta (después).
-    No se permite invocar un método desde otro método de la misma jerarquía.
-[TP4]
-  - operacion(): el plegado de constantes ya NO pliega cuando el resultado se sale de
-    [0, 65535] (por ejemplo 2$ui - 3$ui o 300$ui * 300$ui); en ese caso se emite el terceto
-    y el control de overflow / resta negativa se hace en ejecución (controles d y f).
-  - COMPTIME acepta también constantes flotantes.
-  - Se eliminaron el bloque __main__ de pruebas (ahora está en main.py) y un método
-    'operacion' duplicado.
-[T34] TEMA 34 SEGÚN EL ENUNCIADO
-  - Operando tiene un nuevo campo 'conv': indica que la expresión contiene una conversión
-    explícita TOUI.
-  - Se permiten operaciones y comparaciones con operandos de distinto tipo SOLO si la
-    expresión incluye TOUI. En ese caso el generador inserta la conversión implícita
-    ( TOUI , flotante , - ) sobre el operando DOUBLEF; el resultado es UINTEGER.
-  - Asignar DOUBLEF a UINTEGER sin TOUI es error (mensaje 'asignación incompatible').
-  - Se reemplazó _tipo_resultado por _unificar.
-=====================================================================================
-"""
-
 from dataclasses import dataclass
 from typing import Optional, Union
 from TablaSimbolos import TablaSimbolos
 
-# ----------------------------------------------------------------------------
-# Tipos del lenguaje
-# ----------------------------------------------------------------------------
-UINTEGER = 'UINTEGER'   # tema 4  (entero)
-DOUBLEF = 'DOUBLEF'     # tema 8  (flotante)
+UINTEGER = 'UINTEGER'   
+DOUBLEF = 'DOUBLEF'   
 BOOL = 'BOOL'           # tipo interno: resultado de una comparación
 ERROR = 'ERROR'         # tipo interno: evita errores en cascada
 VOID = 'VOID'           # tipo de retorno de las funciones sin tipo
@@ -80,9 +19,6 @@ JERARQUIA = {UINTEGER: 0, DOUBLEF: 1}   # el mayor es el más abarcativo
 VALOR_DEFECTO = {UINTEGER: '0$ui', DOUBLEF: '0.0'}
 
 
-# ----------------------------------------------------------------------------
-# Tabla de símbolos con atributos semánticos (tipo, uso, ámbito)
-# ----------------------------------------------------------------------------
 class TablaSimbolosSemantica(TablaSimbolos):
 
     def declarar(self, nombre_interno, tipo, uso, ambito, **extra):
@@ -101,14 +37,10 @@ class TablaSimbolosSemantica(TablaSimbolos):
         return True
 
     def miembros_de(self, clase):
-        """[PASO 5] Símbolos declarados como miembros (atributos y métodos) de 'clase'."""
         return [s for (n, tok), s in self._simbolos.items()
                 if tok == 'ID' and s.get('miembro_de') == clase]
 
 
-# ----------------------------------------------------------------------------
-# Errores: se acumulan y se muestran todos juntos al final (lo pide el TP3)
-# ----------------------------------------------------------------------------
 class Errores:
     def __init__(self):
         self.lista = []
@@ -130,18 +62,12 @@ class Errores:
             print(f"Línea {linea}: {msg}")
 
 
-# ----------------------------------------------------------------------------
-# Ámbitos y name mangling
-# ----------------------------------------------------------------------------
 class GestorAmbitos:
     """
     Mantiene la PILA de ámbitos. Cada símbolo se guarda en la Tabla de Símbolos
     con su nombre + ':' + ámbito completo:
         a declarada en main            ->  a:main
         parámetro x de la función aa   ->  x:main:aa
-    Reglas de alcance (enunciado):
-      - un símbolo es visible en su ámbito y en los ámbitos contenidos en él
-      - mismo nombre permitido en ámbitos distintos, NO en el mismo ámbito
     """
 
     def __init__(self, tabla, errores, global_='main'):
@@ -152,6 +78,10 @@ class GestorAmbitos:
         self.clase_actual = None
         self.amigos_por_clase = {}
 
+    """
+    al llamarse una funcion o clase el gestor de ambitos usa entrar() y salir(), para poder 
+    definir el ambito actual donde está
+    """
     def ambito_actual(self):
         return ':'.join(self.pila)
 
@@ -160,7 +90,8 @@ class GestorAmbitos:
 
     def salir(self):
         self.pila.pop()
-
+        
+    # da de alta un identificador en la tabla de simbolos teniendo en cuenta su ambito actual. por ejemplo x:main:funcion_a
     def declarar(self, nombre, tipo, uso, linea, **extra):
         mangleado = f"{nombre}:{self.ambito_actual()}"
 
@@ -180,19 +111,26 @@ class GestorAmbitos:
             ambito=self.ambito_actual(),
             **extra
         )
+        """
+        **extra es debido a que las diferentes entidades traen diferentes metadatos consigo
+        a la hora de guardarse en la ts. Para el caso de los ID, guarda si es una variable comptime
+        """
+        
         return mangleado
-
+    
+    """
+    se encarga de buscar una variable desde el ámbito local hacia el más externo,
+    de tal modo que puede identificar que valor se usando o cual se debe modificar.
+    Por ejemplo, si tenemos x:main y x:main:func; esto se encarga de verificar en que ambitos estamos,
+    y a partir de allí ver cual es la más apropiada 
+    """
     def resolver(self, nombre, linea):
-        """Busca 'nombre' desde el ámbito actual hacia los ámbitos que lo contienen
-        (de adentro hacia afuera). Devuelve (nombre_mangleado, info) o (None, None).
-        [PASO 5] Al llegar al ámbito de la clase en curso, busca entre sus miembros
-        (incluidos los heredados) antes de seguir hacia afuera."""
         for i in range(len(self.pila), 0, -1):
             if self.clase_actual and self.pila[i - 1] == self.clase_actual:
                 if self.buscar_miembros(self.clase_actual, nombre):
                     info = self.validar_y_obtener_miembro(self.clase_actual, nombre, linea)
                     if info is None:
-                        return None, None          # el error ya fue informado
+                        return None, None         
                     return info['lexema'], info
             mangleado = f"{nombre}:{':'.join(self.pila[:i])}"
             info = self.tabla.buscar(mangleado)
@@ -209,10 +147,9 @@ class GestorAmbitos:
             self.errores.semantico(linea, f"La variable '{nombre_mangleado}' no es de tipo COMPTIME.")
 
     def obtener_valor_comptime(self, nombre_mangleado):
-        """Devuelve el valor registrado si es una variable comptime."""
         return self.valores_comptime.get(nombre_mangleado)
 
-    # ---------------- clases ----------------
+
     def iniciar_clase(self, nombre_clase, linea, clase_padre=None):
         if self.tabla.buscar(nombre_clase, token='CLASS') is not None:
             self.errores.semantico(linea, f"la clase '{nombre_clase}' ya está declarada.")
@@ -223,23 +160,29 @@ class GestorAmbitos:
                 uso='clase',
                 ambito='global',
                 amigos=set(),
-                padres=[]                  # [HERENCIA MÚLTIPLE] se completa con 'extends' en el cuerpo
+                padres=[]               
             )
+            """
+            en este caso amigos y padres funciona porque en la TS, en el metodo registrar llega **atributos.
+            Este es flexible y permite empaquetar en un diccionario (nuestra ts) los datos necesarios para cada entidad
+            """
+            
         self.clase_actual = nombre_clase
-        self.entrar(nombre_clase)          # [PASO 5] la clase es un ámbito más
-        if clase_padre is not None:        # compatibilidad con la forma 'class b extends a'
+        self.entrar(nombre_clase)        
+        if clase_padre is not None:       
             self.registrar_herencia([clase_padre], linea)
 
     def registrar_herencia(self, nombres, linea):
-        """[HERENCIA MÚLTIPLE] 'extends cb, cc, cd;' dentro del cuerpo de la clase actual.
-        Cada base debe estar declarada, no puede ser la propia clase ni repetirse."""
         if not self.clase_actual:
             self.errores.semantico(linea, "la declaración 'extends' debe estar dentro del cuerpo de una clase.")
             return
         info_clase = self.tabla.buscar(self.clase_actual, token='CLASS')
         if info_clase is None:
             return
+        
+        #set default permite desempaquetar correctamente los metadatos guardados en la ts (si no tiene padre, crea una lista vacía)
         padres = info_clase.setdefault('padres', [])
+        
         for nombre in nombres:
             if nombre == self.clase_actual:
                 self.errores.semantico(linea, f"la clase '{nombre}' no puede heredar de sí misma.")
@@ -265,7 +208,6 @@ class GestorAmbitos:
         return False
 
     def declarar_miembro(self, tipo, nombre, uso, visibilidad, linea, **extra):
-        """Registra un atributo o método de la clase actual como 'Clase.nombre'."""
         if not self.clase_actual:
             self.errores.semantico(linea, f"el miembro '{nombre}' debe declararse dentro de una clase.")
             return None
@@ -281,15 +223,13 @@ class GestorAmbitos:
             uso=uso,
             ambito=self.clase_actual,
             visibilidad=visibilidad,
-            miembro_de=self.clase_actual,     # [PASO 5] para listar los miembros de una clase
+            miembro_de=self.clase_actual,    
             miembro=nombre,
             **extra
         )
         return nombre_interno
 
     def cadena_de_clases(self, clase):
-        """[clase, y todos sus ancestros] sin repetidos (primero en profundidad).
-        Con herencia múltiple un ancestro común (rombo) aparece una sola vez."""
         resultado = []
 
         def visitar(c):
@@ -304,7 +244,6 @@ class GestorAmbitos:
         return resultado
 
     def buscar_miembros(self, clase, nombre_miembro):
-        """Búsqueda SILENCIOSA: [(clase_propietaria, info)] en toda la jerarquía."""
         res = []
         for c in self.cadena_de_clases(clase):
             info = self.tabla.buscar(f"{c}.{nombre_miembro}")
@@ -313,7 +252,6 @@ class GestorAmbitos:
         return res
 
     def atributos_de_jerarquia(self, clase):
-        """[(clase_propietaria, nombre, info)] de todos los ATRIBUTOS de la clase y sus bases."""
         res = []
         for c in self.cadena_de_clases(clase):
             for s in self.tabla.miembros_de(c):
@@ -324,24 +262,20 @@ class GestorAmbitos:
     def validar_y_obtener_miembro(self, clase_propietaria, nombre_miembro, linea):
         coincidencias = self.buscar_miembros(clase_propietaria, nombre_miembro)
 
-        # 1. Chequeo de existencia
         if not coincidencias:
             self.errores.semantico(linea, f"El miembro '{nombre_miembro}' no existe en la clase '{clase_propietaria}' ni en sus clases base.")
             return None
 
-        # 2. Chequeo de ambigüedad (tema 32): el miembro existe en más de una clase de la cadena
         if len(coincidencias) > 1:
             clases_implicadas = ", ".join([c[0] for c in coincidencias])
             self.errores.semantico(linea, f"El miembro '{nombre_miembro}' es ambiguo; está declarado en múltiples clases de la jerarquía: [{clases_implicadas}].")
             return None
 
         propietario_real, info = coincidencias[0]
-
-        # 3. Miembro público: se permite
         if info.get('visibilidad', 'public') != 'private':
             return info
 
-        # 4. Miembro PRIVADO (tema 27): solo la misma clase o sus amigos
+        # 4. Miembro privado: solo la misma clase o sus amigos
         es_propio = (self.clase_actual == propietario_real)
         info_clase_prop = self.tabla.buscar(propietario_real, token='CLASS')
         amigos_de_la_clase = info_clase_prop.get('amigos', set()) if info_clase_prop else set()
@@ -365,17 +299,14 @@ class GestorAmbitos:
         self.salir()
 
 
-# ----------------------------------------------------------------------------
-# Tercetos
-# ----------------------------------------------------------------------------
 @dataclass
 class Terceto:
     op: str
-    a1: Union[int, str, None] = None   # int -> referencia a otro terceto [n] ; str -> símbolo de la TS
+    a1: Union[int, str, None] = None   
     a2: Union[int, str, None] = None
-    tipo: Optional[str] = None         # tipo del resultado
+    tipo: Optional[str] = None       
 
-
+#auxiliar para imprimir mejor los resultados de los tercetos
 def _fmt(x):
     if x is None:
         return '-'
@@ -385,8 +316,8 @@ def _fmt(x):
 
 
 class UnidadCodigo:
-    """Una estructura dinámica (lista) de tercetos. Una por el programa principal
-    y una por cada función, así los saltos son relativos a su propia numeración."""
+    """lista de tercetos. 
+    Una por el programa principal y una por cada función"""
 
     def __init__(self, nombre):
         self.nombre = nombre
@@ -400,7 +331,7 @@ class UnidadCodigo:
         return len(self.tercetos)
 
     def completar_salto(self, idx, destino):
-        """Backpatching: completa el destino de un salto emitido antes de conocerlo."""
+        #Backpatching: completa el destino de un salto emitido antes de conocerlo
         t = self.tercetos[idx]
         if t.op == 'BI':
             t.a1 = destino
@@ -421,22 +352,16 @@ class UnidadCodigo:
             print(f"{i:>3}  ( {t.op} , {_fmt(t.a1)} , {_fmt(t.a2)} )")
 
 
-# ----------------------------------------------------------------------------
-# Operando: lo que devuelve cada expresión (referencia + tipo)
-# ----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Operando:
-    ref: Union[int, str, None]   # int -> resultado de un terceto ; str -> símbolo/constante de la TS
+    ref: Union[int, str, None]   
     tipo: str
-    conv: bool = False           # [T34] la expresión contiene una conversión explícita TOUI
+    conv: bool = False           
 
 
 ERR = Operando(None, ERROR)
 
 
-# ----------------------------------------------------------------------------
-# Generador de código intermedio
-# ----------------------------------------------------------------------------
 class GeneradorCodigo:
     def __init__(self, tabla, errores, ambitos):
         self.tabla = tabla
@@ -458,7 +383,7 @@ class GeneradorCodigo:
     def variable(self, nombre, linea) -> Operando:
         """
         Lectura (rvalue): Se usa cuando la variable aparece en expresiones.
-        Si es COMPTIME, exige que ya tenga un valor registrado; si no, da error.
+        Si es comptime, exige que ya tenga un valor registrado; si no, da error.
         """
         mangleado, info = self.ambitos.resolver(nombre, linea)
         if info is None:
@@ -482,7 +407,7 @@ class GeneradorCodigo:
 
     def variable_destino(self, nombre, linea) -> Operando:
         """
-        Escritura (lvalue): Se usa cuando la variable va al LADO IZQUIERDO de una asignación.
+        Escritura (lvalue): Se usa cuando la variable va al lado izquierdo de una asignación.
         NO exige valor previo porque se le asignará uno en este paso.
         """
         mangleado, info = self.ambitos.resolver(nombre, linea)
@@ -494,8 +419,13 @@ class GeneradorCodigo:
 
         return Operando(mangleado, info['tipo'])
 
+
+    """
+    a diferencia de lo que pasaba en gestor de ambitos, estos tipos de datos son inmutables y globales a lo largo
+    de todo el programa, por eso se tratan aquí directamente
+    """
     def constante_ui(self, valor) -> Operando:
-        lexema = f"{valor}$ui"          # misma clave que usa el léxico al insertar
+        lexema = f"{valor}$ui"   
         self.tabla.registrar(lexema, 'CONST_UI', tipo=UINTEGER)
         return Operando(lexema, UINTEGER)
 
@@ -503,11 +433,12 @@ class GeneradorCodigo:
         self.tabla.registrar(lexema, 'FLOAT', tipo=DOUBLEF)
         return Operando(lexema, DOUBLEF)
 
-    # ---------------- declaración de variables ----------------
+
+    """
+    se ayuda de gestor de ámbitos para declarar variables, ya que el gestor no sabe cuando es válido.
+    Solo se usa para declararlo en tabla de simbolos de forma correcta
+    """
     def declarar_variables(self, tipo, nombres, linea, comptime=False):
-        """Registra cada variable en el ámbito actual (con name mangling) con su tipo.
-        [PASO 5] Si el tipo es una CLASE, la variable es un objeto y se le crea una copia
-        de cada atributo de la clase (y de sus bases)."""
         es_clase = self.tabla.buscar(tipo, token='CLASS') is not None
         if tipo not in TIPOS_BASICOS and not es_clase:
             self.errores.semantico(linea, f"el tipo '{tipo}' no es UINTEGER, DOUBLEF ni una clase declarada.")
@@ -521,7 +452,6 @@ class GeneradorCodigo:
                 self._instanciar_objeto(mangleado, tipo)
 
     def _nombre_instancia(self, objeto_mangleado, miembro):
-        """v:main + velocidad  ->  v.velocidad:main"""
         nombre, _, ambito = objeto_mangleado.partition(':')
         return f"{nombre}.{miembro}:{ambito}"
 
@@ -533,9 +463,8 @@ class GeneradorCodigo:
                 self.tabla.registrar(inst, 'ID', tipo=info['tipo'], uso='variable',
                                      ambito=ambito, objeto=mangleado, propietario=propietario)
 
-    # ---------------- acceso con '.' (tema 28) ----------------
+
     def acceso_miembro_punto(self, obj: Operando, miembro, linea) -> Operando:
-        """obj.miembro  ->  símbolo de la copia del atributo dentro del objeto."""
         if obj.tipo == ERROR:
             return ERR
         if self.tabla.buscar(obj.tipo, token='CLASS') is None:
@@ -556,13 +485,12 @@ class GeneradorCodigo:
     def acceso_miembro_punto_destino(self, obj: Operando, miembro, linea) -> Operando:
         return self.acceso_miembro_punto(obj, miembro, linea)
 
-    # ---------------- chequeo de tipos (tema 34) ----------------
+
+    """
+    resuelve si dos expresiones con distintos tipos pueden 
+    compatibilizarse bajo un mismo tipo al usarse TOUI
+    """
     def _unificar(self, izq: Operando, der: Operando, linea):
-        """[T34] Devuelve (tipo, ref_izq, ref_der) o None si hay error.
-        - Mismo tipo: pasa directo.
-        - Tipos distintos: solo se permite si alguna de las expresiones contiene un TOUI
-          explícito; en ese caso se inserta la conversión implícita UITOF sobre el entero
-          y el resultado es DOUBLEF."""
         t1, t2 = izq.tipo, der.tipo
         if t1 not in TIPOS_BASICOS or t2 not in TIPOS_BASICOS:
             self.errores.semantico(linea, f"operación no válida entre '{t1}' y '{t2}'.")
@@ -572,7 +500,7 @@ class GeneradorCodigo:
         if not (izq.conv or der.conv):
             self.errores.semantico(
                 linea, f"operandos de tipos distintos ({t1} y {t2}) sin conversión explícita; "
-                       f"con el tema 34 hace falta TOUI.")
+                       f"hace falta TOUI.")
             return None
         # El operando DOUBLEF se convierte a UINTEGER (conversión implícita) y el
         # resultado queda UINTEGER.
@@ -580,9 +508,8 @@ class GeneradorCodigo:
             return UINTEGER, self.unidad.emitir('TOUI', izq.ref, None, UINTEGER), der.ref
         return UINTEGER, izq.ref, self.unidad.emitir('TOUI', der.ref, None, UINTEGER)
 
-    # ---------------- expresiones ----------------
+
     def operacion(self, op, izq, der, linea) -> Operando:
-        """op en {'+','-','*','/'}"""
         if ERROR in (izq.tipo, der.tipo):
             return ERR
         r = self._unificar(izq, der, linea)
@@ -591,9 +518,8 @@ class GeneradorCodigo:
         tipo, ref1, ref2 = r
         conv = izq.conv or der.conv
 
-        # [PASO 4 - COMPTIME / Constant Folding] Plegado de constantes aritméticas.
-        # [TP4] Solo se pliega si el resultado entra en [0, 65535]; si no, se emite el
-        # terceto para que el control de overflow / resta negativa se haga en ejecución.
+        
+        # Reduce expresiones constantes en tiempo de compilación (transformando 2$ui + 3$ui directamente en 5$ui)
         if (isinstance(izq.ref, str) and isinstance(der.ref, str)
                 and izq.ref.endswith('$ui') and der.ref.endswith('$ui')):
             try:
@@ -621,7 +547,6 @@ class GeneradorCodigo:
         return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo, expr.conv)
 
     def comparacion(self, op, izq, der, linea) -> Operando:
-        """op en {'<','<=','>','>=','==','!='}"""
         if ERROR in (izq.tipo, der.tipo):
             return ERR
         r = self._unificar(izq, der, linea)
@@ -631,7 +556,6 @@ class GeneradorCodigo:
         return Operando(self.unidad.emitir(op, ref1, ref2, BOOL), BOOL)
 
     def convertir_toui(self, expr, linea) -> Operando:
-        """Tema 34: TOUI(expr) convierte DOUBLEF -> UINTEGER."""
         if expr.tipo == ERROR:
             return ERR
         if expr.tipo != DOUBLEF:
@@ -640,7 +564,6 @@ class GeneradorCodigo:
         return Operando(self.unidad.emitir('TOUI', expr.ref, None, UINTEGER), UINTEGER, True)
 
     def _es_comptime_puro(self, ref) -> bool:
-        """[COMPTIME] La expresión solo depende de constantes y de variables COMPTIME."""
         if isinstance(ref, int):
             t = self.unidad.tercetos[ref]
             if t.op in ARIT_OPS or t.op in ('NEG', 'TOUI', 'CONV'):
@@ -654,10 +577,10 @@ class GeneradorCodigo:
         return bool(info and info.get('comptime'))
 
     def _cond_estatica(self, cond) -> bool:
-        """[COMPTIME] La condición se puede resolver en compilación si ambos operandos de la
-        comparación son constantes (las variables COMPTIME ya fueron reemplazadas por su valor)."""
+        """para variables comptime la condición de un IF o WHILE se puede resolver en compilación si ambos operandos de la
+        comparación son constantes (las variables comptime ya fueron reemplazadas por su valor)."""
         if cond.tipo == ERROR:
-            return True                      # el error ya fue informado: evitar cascada
+            return True                 
         if not isinstance(cond.ref, int):
             return False
         t = self.unidad.tercetos[cond.ref]
@@ -669,10 +592,7 @@ class GeneradorCodigo:
     def asignacion(self, destino, expr, linea) -> Operando:
         if ERROR in (destino.tipo, expr.tipo):
             return destino
-
-        # [T34] Una expresión que mezcla tipos con TOUI ya es UINTEGER (ver _unificar),
-        # así que asignarla a un UINTEGER no necesita conversión extra. Una expresión
-        # DOUBLEF pura sí necesita TOUI explícito.
+        
         compatible = destino.tipo == expr.tipo or (
             PERMITE_ENTERO_A_FLOAT and destino.tipo == DOUBLEF and expr.tipo == UINTEGER)
 
@@ -680,7 +600,6 @@ class GeneradorCodigo:
             self.errores.semantico(linea, f"asignación incompatible: destino {destino.tipo}, expresión {expr.tipo}.")
             return destino
 
-        # [PASO 4 - COMPTIME] Validación estricta y registro de valor estático
         info_destino = self.tabla.buscar(destino.ref)
         if info_destino and info_destino.get('comptime') and info_destino.get('uso') != 'parametro':
             if any(self.pila_dinamica):
@@ -705,7 +624,6 @@ class GeneradorCodigo:
         self.unidad.emitir(':=', destino.ref, expr.ref, destino.tipo)
         return destino
 
-    # ---------------- salida y retorno ----------------
     def salida_expresion(self, expr):
         if expr.tipo != ERROR:
             self.unidad.emitir('POUT', expr.ref, None, expr.tipo)
@@ -730,7 +648,6 @@ class GeneradorCodigo:
         if expr.tipo == ERROR:
             return
         if f['tipo'] == 'AUTO':
-            # placeholder: luego será CONV o NOP
             idx_ph = self.unidad.emitir('NOP', expr.ref, None, expr.tipo)
             idx_ret = self.unidad.emitir('RET', expr.ref, None, expr.tipo)
             f['rets'].append((idx_ph, idx_ret, expr.ref, expr.tipo))
@@ -741,7 +658,7 @@ class GeneradorCodigo:
                     f"'ret' devuelve {expr.tipo} pero la función '{f['nombre']}' devuelve {f['tipo']}.")
 
     def finalizar_funcion(self, linea):
-        info = self.pila_funciones[-1]          # peek: todavía no se saca
+        info = self.pila_funciones[-1]        
         tipo = info['tipo']
 
         if tipo == 'AUTO':
@@ -750,21 +667,17 @@ class GeneradorCodigo:
                 tipo = max((r[3] for r in info['rets']), key=JERARQUIA.get)
                 for idx_ph, idx_ret, ref, t in info['rets']:
                     if t != tipo:
-                        # el placeholder pasa a ser la conversión UINTEGER -> DOUBLEF
                         self.unidad.reemplazar(idx_ph, 'CONV', ref, None, tipo)
-                        # y el RET devuelve el resultado de la conversión
                         self.unidad.reemplazar(idx_ret, 'RET', self.unidad.ref(idx_ph), None, tipo)
                     else:
-                        # no hace falta convertir: el placeholder queda como NOP vacío
                         self.unidad.reemplazar(idx_ph, 'NOP', None, None, None)
             else:
                 if info['cant_ret'] == 0:
                     self.errores.semantico(linea,
                         f"La función AUTO '{info['nombre']}' debe tener al menos un 'ret'.")
-                tipo = ERROR                    # (si había 'ret' con error, ya fue informado)
-            info['tipo'] = tipo                 # tipo que verán las invocaciones
+                tipo = ERROR                   
+            info['tipo'] = tipo                 
 
-        # retorno por defecto SIEMPRE (explícitas y AUTO resuelta)
         if tipo in VALOR_DEFECTO:
             if tipo == UINTEGER:
                 self.constante_ui(0)
@@ -821,7 +734,7 @@ class GeneradorCodigo:
         self._resolver_tipo_auto(info, linea)
         self.ambitos.salir()
 
-    # ---------------- invocaciones [PASO 3] ----------------
+
     def _emitir_llamada(self, info, args, linea, nombre, antes=(), despues=()):
         params = info.get('parametros', [])
         if any(a.tipo == ERROR for a in args) or info.get('tipo') == ERROR:
@@ -872,7 +785,6 @@ class GeneradorCodigo:
             return ERR
         return op
 
-    # ---------------- métodos [PASO 5] ----------------
     def iniciar_metodo(self, tipo_retorno, nombre, parametros, linea):
         clase = self.ambitos.clase_actual
         if tipo_retorno not in TIPOS_BASICOS:
@@ -924,27 +836,9 @@ class GeneradorCodigo:
             afuera.append((inst, plantilla, ainfo['tipo']))
         return self._emitir_llamada(info, args, linea, nombre, adentro, afuera)
 
-    # ------------------------------------------------------------------
-    # [PASO 2 - REVISIÓN] Sentencias de control SIN tercetos LABEL.
-    #
-    # Convención:  DIR_ACTUAL = número del ÚLTIMO terceto emitido.
-    #              self.unidad.proximo() = DIR_ACTUAL + 1 = próximo terceto a emitir.
-    #
-    # pila_control guarda tuplas (tipo, nro_terceto):
-    #     ('BF', n)      BF incompleto           ('BI', n)      BI incompleto
-    #     ('INICIO', n)  terceto donde empieza la condición de un WHILE
-    #
-    #   IF (c) A end_if        ->  [cond] BF(c,->fin) [A]  fin:
-    #   IF (c) A else B end_if ->  [cond] BF(c,->B) [A] BI(->fin) B: [B]  fin:
-    #   WHILE (c) repeat A     ->  ini: [cond] BF(c,->fin) [A] BI(->ini)  fin:
-    #
-    # OJO: un destino puede ser == len(tercetos) si la sentencia es lo último de la
-    # unidad (no hay terceto "siguiente"); el Assembler lo trata como una etiqueta al final.
-    # ------------------------------------------------------------------
     def _tope_es(self, *tipos) -> bool:
         return bool(self.pila_control) and self.pila_control[-1][0] in tipos
 
-    # ---------------- IF ----------------
     def if_condicion(self, cond, linea):
         """TERMINA LA CONDICIÓN: 1) crea el BF incompleto  2) apila su número."""
         if cond.tipo not in (BOOL, ERROR):
@@ -972,7 +866,6 @@ class GeneradorCodigo:
             self.pila_dinamica.pop()
         self.unidad.completar_salto(pendiente, self.unidad.proximo())
 
-    # ---------------- WHILE ... REPEAT (tema 11) ----------------
     def while_inicio(self):
         """ANTES DE LA CONDICIÓN: apila el número del terceto donde empieza."""
         self.nivel_while += 1
@@ -1005,9 +898,6 @@ class GeneradorCodigo:
         """Para depurar: saltos que quedaron sin completar (debería ser lista vacía)."""
         return list(self.pila_control)
 
-    # =========================================================================
-    # PUENTES HACIA GESTOR DE ÁMBITOS (clases)
-    # =========================================================================
     def iniciar_clase(self, nombre_clase, linea, clase_padre=None):
         return self.ambitos.iniciar_clase(nombre_clase, linea, clase_padre)
 
@@ -1026,7 +916,6 @@ class GeneradorCodigo:
     def registrar_amigo(self, nombre_amigo, linea):
         return self.ambitos.registrar_amigo(nombre_amigo, linea)
 
-    # ---------------- salida ----------------
     def imprimir(self):
         for u in self.terminadas:
             u.imprimir()
