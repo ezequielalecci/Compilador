@@ -113,6 +113,9 @@ class Errores:
     def __init__(self):
         self.lista = []
 
+    def lexico(self, linea, mensaje):  
+        self.lista.append((linea, f"Error Léxico: {mensaje}"))
+
     def semantico(self, linea, mensaje):
         self.lista.append((linea, f"Error Semántico: {mensaje}"))
 
@@ -669,10 +672,7 @@ class GeneradorCodigo:
     def asignacion(self, destino, expr, linea) -> Operando:
         if ERROR in (destino.tipo, expr.tipo):
             return destino
-
-        # [T34] Una expresión que mezcla tipos con TOUI ya es UINTEGER (ver _unificar),
-        # así que asignarla a un UINTEGER no necesita conversión extra. Una expresión
-        # DOUBLEF pura sí necesita TOUI explícito.
+        
         compatible = destino.tipo == expr.tipo or (
             PERMITE_ENTERO_A_FLOAT and destino.tipo == DOUBLEF and expr.tipo == UINTEGER)
 

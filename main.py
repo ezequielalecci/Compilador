@@ -23,13 +23,14 @@ prueba
 uinteger x;
 doublef y, res;
 
-auto function prueba_ifs(uinteger a, doublef b)
-uinteger aux;
+auto function prueba_ifs()
+Uinteger Aux;
+
 begin
     pout(b);
     aux := toui(b);
     
-    if (a > aux) ret(a);
+    if (a > aux) ret(a); 
     else 
         begin
             if (a < aux) ret(b);
@@ -47,6 +48,47 @@ BEGIN
 END
 '''
 
+
+herencia =  '''
+    prueba
+    uinteger o_x;
+    class cd
+    begin
+        uinteger j;
+    end;
+
+    class cb
+    begin
+        uinteger x;
+    end;
+
+    class cc
+    begin
+        uinteger y;
+        extends cb, cd;
+    end;
+
+    class ca
+    begin
+        uinteger z;
+        extends cc;
+    end;
+
+    ca o;
+
+    BEGIN
+        o.x := 1$ui;
+        o.y := 2$ui;
+        o.z := 3$ui;
+        o.j := 4$ui;
+        pout(o.x);
+        pout(o.y);
+        pout(o.z);
+        pout(o.j);
+        o_x := 10$ui;
+    END
+    '''
+
 def compilar(codigo, salida_asm='salida.asm'):
     sintactico.MOSTRAR_AST = False
 
@@ -55,7 +97,7 @@ def compilar(codigo, salida_asm='salida.asm'):
     ambitos = GestorAmbitos(ts, errores)
     gen = GeneradorCodigo(ts, errores, ambitos)
 
-    lexer = AnalizadorLexico(ts)
+    lexer = AnalizadorLexico(ts,errores)
     parser = sintactico.AnalizadorSintactico(ts, gen)
 
     print("=" * 70)
@@ -97,5 +139,5 @@ if __name__ == '__main__':
         with open(sys.argv[1], encoding='utf-8') as f:
             codigo = f.read()
     else:
-        codigo = PROGRAMA
+        codigo = herencia
     compilar(codigo)
