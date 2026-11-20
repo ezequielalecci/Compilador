@@ -13,9 +13,6 @@ from GeneradorAssembler import GeneradorAssembler
 CARPETA_TEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test')
 
 
-# --------------------------------------------------------------------------
-# Utilidades
-# --------------------------------------------------------------------------
 def banner(titulo):
     print("=" * 70)
     print(titulo)
