@@ -126,9 +126,6 @@ Si alguna falla, el programa termina con código de error (útil si lo usás en 
 3. Escribí el programa adentro.
 4. Corrélo con `python main.py ok_while_simple`.
 
-Un truco: los comentarios del lenguaje van entre `{{ ` y ` }}`, así que podés dejar
-escrito arriba qué se espera que pase:
-
 ```
 prueba
 
