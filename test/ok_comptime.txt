@@ -1,0 +1,22 @@
+prueba 
+
+comptime uinteger x, y;
+
+begin
+    x := 3$ui;
+    y := 4$ui;
+    
+    if (x < 20$ui)
+    begin
+        x := 10$ui;
+        y := x + 1$ui;
+    end
+    else
+    begin
+        x := 100$ui;
+        y := x + 1$ui;
+    end
+    end_if;
+
+    pout(x);
+end

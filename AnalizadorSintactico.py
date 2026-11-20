@@ -1,18 +1,26 @@
 import json
 from sly import Parser
 from AnalizadorLexico import AnalizadorLexico
-from TablaSimbolos import TablaSimbolos
+from CodigoIntermedio import GeneradorCodigo, ERR, VOID
+
+MOSTRAR_AST = False
 
 
 class AnalizadorSintactico(Parser):
     tokens = AnalizadorLexico.tokens
     start = 'programa'
 
-    def __init__(self, tabla_simbolos):
+    def __init__(self, tabla_simbolos, generador):
         self.tabla = tabla_simbolos
+        self.gen = generador
+
+    def _linea(self, p):
+        try:
+            return p.lineno
+        except AttributeError:
+            return 0
 
     precedence = (
-        ('right', 'ASSIGN'),
         ('left', 'PLUS', 'MINUS'),
         ('left', 'TIMES', 'DIVIDE'),
         ('right', 'UMINUS'),
@@ -26,7 +34,8 @@ class AnalizadorSintactico(Parser):
             'declaraciones': p.bloque_declarativo,
             'ejecutables': p.bloque_obligatorio,
         }
-        print(json.dumps(ast, indent=2, ensure_ascii=False))
+        if MOSTRAR_AST:
+            print(json.dumps(ast, indent=2, ensure_ascii=False, default=str))
         return ast
 
     @_('declaraciones')
@@ -56,6 +65,9 @@ class AnalizadorSintactico(Parser):
 
     @_('var_decl_base ";"')
     def declaracion_comun(self, p):
+        self.gen.declarar_variables(p.var_decl_base['tipo_dato'],
+                                    p.var_decl_base['variables'],
+                                    self._linea(p))
         return {
             'tipo': 'DECLARACION_VARIABLES',
             'tipo_dato': p.var_decl_base['tipo_dato'],
@@ -64,6 +76,9 @@ class AnalizadorSintactico(Parser):
 
     @_('COMPTIME var_decl_base ";"')
     def declaracion_comptime(self, p):
+        self.gen.declarar_variables(p.var_decl_base['tipo_dato'],
+                                    p.var_decl_base['variables'],
+                                    self._linea(p), comptime=True)
         return {
             'tipo': 'DECLARACION_COMPTIME',
             'tipo_dato': p.var_decl_base['tipo_dato'],
@@ -77,107 +92,123 @@ class AnalizadorSintactico(Parser):
             'variables': p.lista_ids
         }
 
-    @_('tipo_dato FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': p.tipo_dato,
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    def _falta_parametro(self, tipo, nombre, linea):
+        self.gen.errores.semantico(
+            linea, f"{tipo} '{nombre}' debe tener al menos un parámetro.")
 
-    # El bloque_auto es para que tenga ret explícito
-    @_('AUTO FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_auto ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'AUTO',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_auto['cuerpo'],
-            'expresion_retorno': p.bloque_auto['retorno']
-        }
+    @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_funcion(self, p):
+        self.gen.iniciar_funcion_decl(p.tipo_dato, p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
 
-    @_('FUNCTION ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'VOID',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
+    @_('FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_funcion(self, p):
+        self.gen.iniciar_funcion_decl(VOID, p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
 
-    @_('CLASS ID BEGIN miembros_clase END ";"')
+    @_('AUTO FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_auto(self, p):
+        self.gen.iniciar_funcion_decl('AUTO', p.ID, p.lista_parametros, self._linea(p))
+        return p.ID
+
+    @_('tipo_dato FUNCTION ID "(" ")"')
+    def cabecera_funcion(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl(p.tipo_dato, p.ID, [], self._linea(p))
+        return p.ID
+
+    @_('FUNCTION ID "(" ")"')
+    def cabecera_funcion(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl(VOID, p.ID, [], self._linea(p))
+        return p.ID
+
+    @_('AUTO FUNCTION ID "(" ")"')
+    def cabecera_auto(self, p):
+        self._falta_parametro('la función', p.ID, self._linea(p))
+        self.gen.iniciar_funcion_decl('AUTO', p.ID, [], self._linea(p))
+        return p.ID
+
+    @_('cabecera_funcion bloque_declarativo bloque_obligatorio ";"')
+    def declaracion_funcion(self, p):
+        self.gen.finalizar_funcion_decl(self._linea(p))
+        return None
+
+    @_('cabecera_auto bloque_declarativo bloque_auto ";"')
+    def declaracion_funcion(self, p):
+        self.gen.finalizar_funcion_decl(self._linea(p))
+        return None
+
+    @_('CLASS ID')
+    def inicio_clase(self, p):
+        self.gen.iniciar_clase(p.ID, self._linea(p))
+        return p.ID
+
+    @_('inicio_clase BEGIN cuerpo_clase END ";"')
     def declaracion_clase(self, p):
-        return {
-            'tipo': 'DECLARACION_CLASE',
-            'nombre': p.ID,
-            'miembros': p.miembros_clase
-        }
+        self.gen.cerrar_clase(p.inicio_clase, self._linea(p))
+        return None
 
-    @_('miembro_clase miembros_clase')
-    def miembros_clase(self, p):
-        return [p.miembro_clase] + p.miembros_clase
+    @_('inicio_clase BEGIN cuerpo_clase END')
+    def declaracion_clase(self, p):
+        self.gen.cerrar_clase(p.inicio_clase, self._linea(p))
+        return None
+
+    @_('cuerpo_clase miembro_clase')
+    def cuerpo_clase(self, p):
+        return p.cuerpo_clase + [p.miembro_clase]
 
     @_('')
-    def miembros_clase(self, p):
+    def cuerpo_clase(self, p):
         return []
 
     @_(
-        'declaracion_private_miembro',
-        'declaracion_normal_miembro',
-        'declaracion_friend'
+        'atributo_privado',
+        'atributo_publico',
+        'metodo_privado',
+        'metodo_publico',
+        'declaracion_friend',
+        'declaracion_extends'
     )
     def miembro_clase(self, p):
         return p[0]
 
-    @_(
-        'declaracion_comun',
-        'declaracion_comptime',
-        'declaracion_metodo'
-    )
-    def declaracion_normal_miembro(self, p):
-        return p[0]
+    @_('PRIVATE tipo_dato ID ";"')
+    def atributo_privado(self, p):
+        return self.gen.declarar_atributo(p.tipo_dato, p.ID, visibilidad='private', linea=self._linea(p))
 
-    @_('PRIVATE declaracion_normal_miembro')
-    def declaracion_private_miembro(self, p):
-        miembro = p[1].copy()
-        miembro['privado'] = True
-        return miembro
+    @_('tipo_dato ID ";"')
+    def atributo_publico(self, p):
+        return self.gen.declarar_atributo(p.tipo_dato, p.ID, visibilidad='public', linea=self._linea(p))
+    
+    @_('tipo_dato FUNCTION ID "(" ")"')
+    def cabecera_metodo(self, p):
+        self._falta_parametro('el método', p.ID, self._linea(p))
+        return self.gen.iniciar_metodo(p.tipo_dato, p.ID, [], self._linea(p))
+
+    @_('tipo_dato FUNCTION ID "(" lista_parametros ")"')
+    def cabecera_metodo(self, p):
+        return self.gen.iniciar_metodo(p.tipo_dato, p.ID, p.lista_parametros, self._linea(p))
+
+    @_('PRIVATE cabecera_metodo bloque_declarativo bloque_obligatorio ";"')
+    def metodo_privado(self, p):
+        self.gen.finalizar_metodo(p.cabecera_metodo, 'private', self._linea(p))
+        return None
+
+    @_('cabecera_metodo bloque_declarativo bloque_obligatorio ";"')
+    def metodo_publico(self, p):
+        self.gen.finalizar_metodo(p.cabecera_metodo, 'public', self._linea(p))
+        return None
+
+    @_('EXTENDS lista_ids ";"')
+    def declaracion_extends(self, p):
+        self.gen.registrar_herencia(p.lista_ids, self._linea(p))
+        return None
 
     @_('FRIEND ID ";"')
     def declaracion_friend(self, p):
-        return {
-            'tipo': 'DECLARACION_FRIEND',
-            'nombre': p.ID
-        }
-
-    @_('tipo_dato ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_metodo(self, p):
-        return {
-            'tipo': 'DECLARACION_METODO',
-            'retorno': p.tipo_dato,
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio
-        }
-
-    @_('ID "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_metodo(self, p):
-        return {
-            'tipo': 'DECLARACION_METODO',
-            'retorno': 'VOID',
-            'nombre': p.ID,
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio
-        }
+        self.gen.registrar_amigo(p.ID, self._linea(p))
+        return None
 
     @_('ID "," lista_ids')
     def lista_ids(self, p):
@@ -186,10 +217,6 @@ class AnalizadorSintactico(Parser):
     @_('ID')
     def lista_ids(self, p):
         return [p.ID]
-
-    @_('')
-    def lista_parametros(self, p):
-        return []
 
     @_('parametro "," lista_parametros')
     def lista_parametros(self, p):
@@ -206,6 +233,14 @@ class AnalizadorSintactico(Parser):
             'id': p.ID
         }
 
+    @_('COMPTIME tipo_dato ID')
+    def parametro(self, p):
+        return {
+            'tipo_dato': p.tipo_dato,
+            'id': p.ID,
+            'comptime': True
+        }
+
     @_('sentencia ";" sentencias_ejecutables')
     def sentencias_ejecutables(self, p):
         return [p.sentencia] + p.sentencias_ejecutables
@@ -216,6 +251,10 @@ class AnalizadorSintactico(Parser):
 
     @_('BEGIN sentencias_ejecutables END')
     def bloque_obligatorio(self, p):
+        return p.sentencias_ejecutables
+
+    @_('BEGIN sentencias_ejecutables END')
+    def bloque_auto(self, p):
         return p.sentencias_ejecutables
 
     @_('bloque_obligatorio')
@@ -237,64 +276,49 @@ class AnalizadorSintactico(Parser):
     def sentencia_no_retorno(self, p):
         return p[0]
 
-    @_('sentencia_no_retorno ";" sentencias_no_retorno')
-    def sentencias_no_retorno(self, p):
-        return [p.sentencia_no_retorno] + p.sentencias_no_retorno
-
-    @_('sentencia_no_retorno ";"')
-    def sentencias_no_retorno(self, p):
-        return [p.sentencia_no_retorno]
-
     @_('sentencia_no_retorno', 'sentencia_retorno')
     def sentencia(self, p):
         return p[0]
 
-    @_('BEGIN sentencias_no_retorno sentencia_retorno ";" END')
-    def bloque_auto(self, p):
-        return {
-            'cuerpo': p.sentencias_no_retorno + [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+    @_('IF "(" condicion ")"')
+    def inicio_if(self, p):
+        self.gen.if_condicion(p.condicion, self._linea(p))
+        return None
 
-    @_('BEGIN sentencia_retorno ";" END')
-    def bloque_auto(self, p):
-        return {
-            'cuerpo': [p.sentencia_retorno],
-            'retorno': p.sentencia_retorno['expresion']
-        }
+    @_('ELSE')
+    def rama_else(self, p):
+        self.gen.if_else()
+        return None
 
-    @_('IF "(" condicion ")" bloque_o_sentencia ELSE bloque_o_sentencia END_IF')
+    @_('inicio_if bloque_o_sentencia rama_else bloque_o_sentencia END_IF')
     def sentencia_if(self, p):
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia0,
-            'bloque_else': p.bloque_o_sentencia1,
-        }
+        self.gen.if_fin()
+        return None
 
-    @_('IF "(" condicion ")" bloque_o_sentencia END_IF')
+    @_('inicio_if bloque_o_sentencia END_IF')
     def sentencia_if(self, p):
-        return {
-            'tipo': 'IF',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia,
-        }
+        self.gen.if_fin()
+        return None
 
-    @_('WHILE "(" condicion ")" REPEAT bloque_o_sentencia')
+    @_('WHILE')
+    def inicio_while(self, p):
+        self.gen.while_inicio()
+        return None
+
+    @_('inicio_while "(" condicion ")" REPEAT')
+    def cabecera_while(self, p):
+        self.gen.while_condicion(p.condicion, self._linea(p))
+        return None
+
+    @_('cabecera_while bloque_o_sentencia')
     def sentencia_while(self, p):
-        return {
-            'tipo': 'SENTENCIA_WHILE',
-            'condicion': p.condicion,
-            'cuerpo': p.bloque_o_sentencia,
-        }
+        self.gen.while_fin()
+        return None
 
     @_('expresion comparador expresion')
     def condicion(self, p):
-        return {
-            'izquierda': p.expresion0,
-            'operador': p.comparador,
-            'derecha': p.expresion1,
-        }
+        operador, linea = p.comparador
+        return self.gen.comparacion(operador, p.expresion0, p.expresion1, linea)
 
     @_(
         'LESS',
@@ -305,88 +329,59 @@ class AnalizadorSintactico(Parser):
         'NOT_EQUALS',
     )
     def comparador(self, p):
-        return p[0]
+        return (p[0], p.lineno)
 
-    @_('ref_variable TWO_POINTS_ASSING expresion')
+    @_('destino_asignacion TWO_POINTS_ASSING expresion')
     def asignacion(self, p):
-        return {
-            'tipo': 'ASIGNACION',
-            'destino': p.ref_variable,
-            'expresion': p.expresion
-        }
+        self.gen.asignacion(p.destino_asignacion, p.expresion, self._linea(p))
+        return None
 
-    @_('ID DOT ID')
-    def ref_variable(self, p):
-        return {
-            'tipo': 'ACCESO_ATRIBUTO',
-            'objeto': p.ID0,
-            'atributo': p.ID1
-        }
+    @_('ID')
+    def destino_asignacion(self, p):
+        return self.gen.variable_destino(p.ID, self._linea(p))
+
+    @_('ref_variable DOT ID')
+    def destino_asignacion(self, p):
+        return self.gen.acceso_miembro_punto_destino(p.ref_variable, p.ID, self._linea(p))
 
     @_('ID')
     def ref_variable(self, p):
-        return {
-            'tipo': 'VARIABLE',
-            'nombre': p.ID
-        }
+        return self.gen.variable(p.ID, self._linea(p))
+
+    @_('ref_variable DOT ID')
+    def ref_variable(self, p):
+        return self.gen.acceso_miembro_punto(p.ref_variable, p.ID, self._linea(p))
 
     @_('RET "(" expresion ")"')
     def sentencia_retorno(self, p):
-        return {
-            'tipo': 'RETORNO',
-            'expresion': p.expresion
-        }
+        self.gen.retorno(p.expresion, self._linea(p))
+        return None
 
     @_('POUT "(" TEXT_STRING ")"')
     def salida(self, p):
-        return {
-            'tipo': 'SALIDA_POUT',
-            'subtipo': 'CADENA',
-            'valor': p.TEXT_STRING
-        }
+        self.gen.salida_cadena(p.TEXT_STRING)
+        return None
 
     @_('POUT "(" expresion ")"')
     def salida(self, p):
-        return {
-            'tipo': 'SALIDA_POUT',
-            'subtipo': 'EXPRESION',
-            'valor': p.expresion
-        }
-
+        self.gen.salida_expresion(p.expresion)
+        return None
 
     @_('ID "(" lista_expresiones ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': p.lista_expresiones,
-        }
+        return self.gen.invocar_funcion(p.ID, p.lista_expresiones, self._linea(p))
 
     @_('ID "(" ")"')
     def invocacion_funcion(self, p):
-        return {
-            'tipo': 'INVOCACION_FUNCION',
-            'nombre': p.ID,
-            'argumentos': []
-        }
+        return self.gen.invocar_funcion(p.ID, [], self._linea(p))
 
-    @_('ID DOT ID "(" lista_expresiones ")"')
+    @_('ref_variable DOT ID "(" lista_expresiones ")"')
     def invocacion_metodo_objeto(self, p):
-        return {
-            'tipo': 'INVOCACION_METODO',
-            'objeto': p.ID0,
-            'metodo': p.ID1,
-            'argumentos': p.lista_expresiones,
-        }
+        return self.gen.invocar_metodo(p.ref_variable, p.ID, p.lista_expresiones, self._linea(p))
 
-    @_('ID DOT ID "(" ")"')
+    @_('ref_variable DOT ID "(" ")"')
     def invocacion_metodo_objeto(self, p):
-        return {
-            'tipo': 'INVOCACION_METODO',
-            'objeto': p.ID0,
-            'metodo': p.ID1,
-            'argumentos': []
-        }
+        return self.gen.invocar_metodo(p.ref_variable, p.ID, [], self._linea(p))
 
     @_('expresion "," lista_expresiones')
     def lista_expresiones(self, p):
@@ -398,38 +393,19 @@ class AnalizadorSintactico(Parser):
 
     @_('expresion PLUS termino')
     def expresion(self, p):
-        return {
-            'op': '+',
-            'izq': p.expresion,
-            'der': p.termino
-        }
+        return self.gen.operacion('+', p.expresion, p.termino, self._linea(p))
 
     @_('expresion MINUS termino')
     def expresion(self, p):
-        return {
-            'op': '-',
-            'izq': p.expresion,
-            'der': p.termino
-        }
+        return self.gen.operacion('-', p.expresion, p.termino, self._linea(p))
 
     @_('MINUS expresion %prec UMINUS')
     def expresion(self, p):
-        return {
-            'op': 'NEGATIVO',
-            'expresion': p.expresion
-        }
+        return self.gen.negar(p.expresion, self._linea(p))
 
     @_('termino')
     def expresion(self, p):
         return p.termino
-
-    @_('ref_variable ASSIGN expresion')
-    def expresion(self, p):
-        return {
-            'tipo': 'ASIGNACION_EMBEBIDA',
-            'destino': p.ref_variable,
-            'expresion': p.expresion
-        }
 
     @_('DOUBLEF', 'UINTEGER', 'ID')
     def tipo_dato(self, p):
@@ -437,19 +413,11 @@ class AnalizadorSintactico(Parser):
 
     @_('termino TIMES factor')
     def termino(self, p):
-        return {
-            'op': '*',
-            'izq': p.termino,
-            'der': p.factor
-        }
+        return self.gen.operacion('*', p.termino, p.factor, self._linea(p))
 
     @_('termino DIVIDE factor')
     def termino(self, p):
-        return {
-            'op': '/',
-            'izq': p.termino,
-            'der': p.factor
-        }
+        return self.gen.operacion('/', p.termino, p.factor, self._linea(p))
 
     @_('factor')
     def termino(self, p):
@@ -462,407 +430,38 @@ class AnalizadorSintactico(Parser):
     @_('invocacion_metodo_objeto')
     def factor(self, p):
         return p.invocacion_metodo_objeto
+    
+    @_('ref_variable ASSIGN factor')
+    def factor(self, p):
+        return self.gen.asignacion(p.ref_variable, p.factor, self._linea(p))
 
     @_('ref_variable')
     def factor(self, p):
         return p.ref_variable
 
-    @_('DOUBLEF', 'CONST_UI')
+    @_('DOUBLEF')
     def factor(self, p):
-        return p[0]
+        return self.gen.constante_float(p.DOUBLEF)
+
+    @_('"(" expresion ")"')
+    def factor(self, p):
+        return p.expresion
+
+    @_('CONST_UI')
+    def factor(self, p):
+        return self.gen.constante_ui(p.CONST_UI)
 
     @_('TOUI "(" expresion ")"')
     def factor(self, p):
-        return {
-            'tipo': 'CONVERSION_TOUI',
-            'expresion': p.expresion
-        }
-
-    # ==============================================================================
-    # SECCIÓN DE DETECCIÓN DE ERRORES ESPECÍFICOS 
-    # ==============================================================================
-
-    @_('error bloque_declarativo bloque_obligatorio')
-    def programa(self, p):
-        print("ERROR: Falta el nombre del programa antes del bloque declarativo.")
-        ast = {
-            'nodo': 'PROGRAMA',
-            'nombre': 'UNKNOWN',
-            'declaraciones': p.bloque_declarativo,
-            'ejecutables': p.bloque_obligatorio,
-        }
-        print(json.dumps(ast, indent=2, ensure_ascii=False))
-        return ast
-
-    @_('error sentencias_ejecutables END')
-    def bloque_obligatorio(self, p):
-        print('ERROR: falta "BEGIN" al comienzo del bloque ejecutable')
-        return p.sentencias_ejecutables
-
-    @_('BEGIN sentencias_ejecutables error')
-    def bloque_obligatorio(self, p):
-        print('ERROR: falta "END" al final del bloque ejecutable')
-        return p.sentencias_ejecutables
-
-    @_('sentencia error sentencias_ejecutables')
-    def sentencias_ejecutables(self, p):
-        print('ERROR: falta ";" antes de la proxima sentencia ejecutable')
-        return [p.sentencia] + p.sentencias_ejecutables
-
-    @_('sentencia error')
-    def sentencias_ejecutables(self, p):
-        print('ERROR: falta ";" al final de la sentencia ejecutable')
-        return [p.sentencia]
-
-    @_('sentencia error')
-    def bloque_o_sentencia(self, p):
-        print('ERROR: falta ";" al final de la sentencia ejecutable')
-        return [p.sentencia]
-
-    @_('tipo_dato FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': p.tipo_dato,
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
-
-    # El bloque_auto es para que tenga ret explícito
-    @_('AUTO FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_auto ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'AUTO',
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_auto['cuerpo'],
-            'expresion_retorno': p.bloque_auto['retorno']
-        }
-
-    @_('FUNCTION error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_funcion(self, p):
-        print('ERROR: falta el nombre de la funcion')
-        return {
-            'tipo': 'DECLARACION_FUNCION',
-            'retorno': 'VOID',
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio,
-        }
-
-    @_('tipo_dato error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_metodo(self, p):
-        print('ERROR: falta el nombre del metodo')
-        return {
-            'tipo': 'DECLARACION_METODO',
-            'retorno': p.tipo_dato,
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio
-        }
-
-    @_('error "(" lista_parametros ")" bloque_declarativo bloque_obligatorio ";"')
-    def declaracion_metodo(self, p):
-        print('ERROR: falta el nombre del metodo')
-        return {
-            'tipo': 'DECLARACION_METODO',
-            'retorno': 'VOID',
-            'nombre': 'UNKNOWN',
-            'parametros': p.lista_parametros,
-            'declaraciones_locales': p.bloque_declarativo,
-            'cuerpo_ejecutable': p.bloque_obligatorio
-        }
-
-    @_('ID error lista_ids')
-    def lista_ids(self, p):
-        print('ERROR: falta "," al declarar las variables')
-        return [p.ID] + p.lista_ids
-
-
-    # esto no funciona, ya que el tipo de dato puede ser un id (como el nombre de una clase)
-    # por lo que no detecta si el tipo de dato esta ausente
-    @_('error ID')
-    def parametro(self, p):
-        print('ERROR: Definicion erronea del parametro')
-        return {
-            'tipo_dato': 'UNKNOWN',
-            'id': p.ID
-        }
-
-    @_('tipo_dato error')
-    def parametro(self, p):
-        print('ERROR: Definicion erronea del parametro')
-        return {
-            'tipo_dato': p.tipo_dato,
-            'id': 'UNKNOWN'
-        }
-
-
-    @_('expresion PLUS error')
-    def expresion(self, p):
-        print(f'ERROR: falta el operando después de + en la línea {p.lineno}')
-        return {
-            'op': '+',
-            'izq': p.expresion,
-            'der': {
-                'op': 'UNKNOWN'
-            }
-        }
-
-
-    @_('expresion MINUS error')
-    def expresion(self, p):
-        print(f'ERROR: falta el operando después de - en la línea {p.lineno}')
-        return {
-            'op': '-',
-            'izq': p.expresion,
-            'der': {
-                'op': 'UNKNOWN'
-            }
-        }
-
-    @_('POUT "(" error ")"')
-    def salida(self, p):
-        print('ERROR: falta argumento de salida')
-        return {
-            'tipo': 'SALIDA_POUT',
-            'subtipo': 'EXPRESION',
-            'valor': 'UNKNOWN'
-        } 
-
-    @_('IF error condicion ")" bloque_o_sentencia ELSE bloque_o_sentencia END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta "(" en la sentencia if')
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia0,
-            'bloque_else': p.bloque_o_sentencia1,
-        }
-
-    @_('IF "(" condicion error bloque_o_sentencia ELSE bloque_o_sentencia END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta ")" en la sentencia if')
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia0,
-            'bloque_else': p.bloque_o_sentencia1,
-        }
-
-    @_('IF error condicion ")" bloque_o_sentencia END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta "(" en la sentencia if')
-        return {
-            'tipo': 'IF',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia,
-        }
-
-    @_('IF "(" condicion error bloque_o_sentencia END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta ")" en la sentencia if')
-        return {
-            'tipo': 'IF',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia,
-        }
-
-    @_('WHILE error condicion ")" REPEAT bloque_o_sentencia')
-    def sentencia_while(self, p):
-        print('ERROR: falta "(" en la sentencia while')
-        return {
-            'tipo': 'SENTENCIA_WHILE',
-            'condicion': p.condicion,
-            'cuerpo': p.bloque_o_sentencia,
-        }
-
-    @_('WHILE "(" condicion error REPEAT bloque_o_sentencia')
-    def sentencia_while(self, p):
-        print('ERROR: falta "(" en la sentencia while')
-        return {
-            'tipo': 'SENTENCIA_WHILE',
-            'condicion': p.condicion,
-            'cuerpo': p.bloque_o_sentencia,
-        }
-
-    @_('IF "(" condicion ")" error ELSE bloque_o_sentencia END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta cuerpo en la sentencia if')
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': 'UNKNOWN',
-            'bloque_else': p.bloque_o_sentencia,
-        }
-
-    @_('IF "(" condicion ")" bloque_o_sentencia ELSE error END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta cuerpo en la sentencia if')
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia,
-            'bloque_else': "UNKNOWN",
-        }
-
-    @_('IF "(" condicion ")" error END_IF')
-    def sentencia_if(self, p):
-        print('ERROR: falta cuerpo en la sentencia if')
-        return {
-            'tipo': 'IF',
-            'condicion': p.condicion,
-            'bloque_then': "UNKNOWN",
-        }
-
-    @_('WHILE "(" condicion ")" REPEAT error')
-    def sentencia_while(self, p):
-        print('ERROR: falta cuerpo en la sentencia while')
-        return {
-            'tipo': 'SENTENCIA_WHILE',
-            'condicion': p.condicion,
-            'cuerpo': "UNKNOWN",
-        }
-
-    @_('IF "(" condicion ")" bloque_o_sentencia ELSE bloque_o_sentencia error')
-    def sentencia_if(self, p):
-        print('ERROR: falta "end_if" en la sentencia if')
-        return {
-            'tipo': 'IF_ELSE',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia0,
-            'bloque_else': p.bloque_o_sentencia1,
-        }
-
-    @_('IF "(" condicion ")" bloque_o_sentencia error')
-    def sentencia_if(self, p):
-        print('ERROR: falta "end_if" en la sentencia if')
-        return {
-            'tipo': 'IF',
-            'condicion': p.condicion,
-            'bloque_then': p.bloque_o_sentencia,
-        }
-
-    @_('WHILE "(" condicion ")" error bloque_o_sentencia')
-    def sentencia_while(self, p):
-        print('ERROR: falta "repeat" en la sentencia while')
-        return {
-            'tipo': 'SENTENCIA_WHILE',
-            'condicion': p.condicion,
-            'cuerpo': p.bloque_o_sentencia,
-        }
+        return self.gen.convertir_toui(p.expresion, self._linea(p))
 
     def error(self, token):
         if token:
-            print(f"Línea {token.lineno}: Error: Símbolo inesperado '{token.value}'.")
+            linea = token.lineno
+            msg = f"Símbolo inesperado '{token.value}'."
         else:
-            print("Error: Se alcanzó el fin de archivo (EOF) inesperadamente.")
-
-if __name__ == '__main__':
-    ts = TablaSimbolos()
-    lexer = AnalizadorLexico(ts)
-    parser = AnalizadorSintactico(ts)
-
-
-    codigo_prueba_funcional = '''
-    mi_programa
-
-    {{ Declaraciones globales }}
-    UINTEGER aux, c;
-    comptime DOUBLEF val_constante;
-
-    {{ Declaracion de Clases }}
-    CLASS punto2d
-    BEGIN
-        PRIVATE DOUBLEF x, y;
-        Friend f1;
-
-        DOUBLEF escalar(DOUBLEF factor)
-            DOUBLEF temp;
-        BEGIN
-            temp := factor * 1.2d+10;
-            ret (temp);
-        END;
-    END;
-
-    CLASS ca
-    BEGIN
-        PRIVATE DOUBLEF a; 
-        PRIVATE DOUBLEF m(DOUBLEF pa)
-        BEGIN 
-            pout({Invocando metodo m});
-            ret(a +pa);
-        END;
-        Friend cb; 
-    END;
-
-    {{ Variables de clase }}
-    punto2d p1, p2;
-    ca a1;
-
-    {{ Funciones }}
-    auto function f() 
-    begin 
-        aux := 10$ui;
-        ret (aux + 5.0);
-    end;
-
-    DOUBLEF function f1 (DOUBLEF x, doublef y)
-        DOUBLEF w ;
-        {{ Funcion anidada }}
-        DOUBLEF function f11 (DOUBLEF x1, DOUBLEF x2)
-        begin
-            x2 := x1;
-            ret (2$ui);
-        end;
-    begin
-        w := f11(x, 0$ui);
-        if (w > 1$ui)
-           ret (w * 2$ui);
-        else
-            begin
-                w := 2$ui;
-                ret (w * 2$ui);
-            end
-        end_if;
-        ret (1$ui);
-    end;
-
-    {{ Bloque principal }}
-    BEGIN
-        {{ Asignaciones y expresiones complejas }}
-        val_constante := .6;
-        aux := 1.0 + 3.0d-5 - .2d34 * 2.5d-1 / 15.2 + 0.0;
-
-        p1.x := 3.5;
-        p2.x := p1.x;
-        aux := p1.escalar(2.0);
-
-        {{ Ciclos e iteraciones }}
-        aux := 10$ui;
-        while (aux < 20$ui) repeat 
-        begin
-            aux := aux - 1$ui; 
-        end;
-
-        {{ Condicionales, llamadas a funcion y conversiones }}
-        c := f(val_constante = 3.0);
-        aux := toui(2.5 * aux);
-
-        {{ Pruebas de salida }}
-        pout ({Prueba combinada finalizada con éxito});
-        pout (aux);
-    END
-    '''
-    tokens = lexer.tokenize(codigo_prueba_funcional)
-    parser.parse(tokens)
-    ts.imprimir_tabla()
-    
+            linea = 0
+            msg = "Se alcanzó el fin de archivo (EOF) inesperadamente."
+        print(f"Línea {linea}: Error: {msg}")
+        # Se registra para que main.py NO genere Assembler si hubo errores sintácticos.
+        self.gen.errores.lista.append((linea, f"Error Sintáctico: {msg}"))

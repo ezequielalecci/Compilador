@@ -9,6 +9,8 @@ ERROR = 'ERROR'         # tipo interno: evita errores en cascada
 VOID = 'VOID'           # tipo de retorno de las funciones sin tipo
 TIPOS_BASICOS = {UINTEGER, DOUBLEF}
 MAX_UI = 65535
+MIN_POS = 2.2250738585072014e-308
+MAX_POS = 1.7976931348623157e+308
 ARIT_OPS = {'+', '-', '*', '/'}
 
 # Asignar entero a flotante sin conversión sigue sin permitirse.
@@ -374,9 +376,10 @@ class GeneradorCodigo:
         self.terminadas = []        # unidades de funciones ya cerradas
         self.pila_control = []      # saltos pendientes de completar (if / while)
         self.pila_funciones = []    # contexto de la función que se está compilando
-        self.nivel_while = 0        # [COMPTIME] cantidad de WHILE abiertos (condición incluida)
-        self.ct_modificadas = set() # [COMPTIME] comptime modificadas dentro de un WHILE
-        self.pila_dinamica = []     # [COMPTIME] por cada if/while abierto: True si su condición NO es estática
+        self.nivel_while = 0          # [COMPTIME] cantidad de WHILE abiertos (condición incluida)
+        self.ct_en_ejecucion = set()  # [COMPTIME] comptime cuyo valor ya no es conocido en compilación
+        self.pila_dinamica = []       # [COMPTIME] por cada if/while abierto: True si su condición NO es estática
+        self.pila_ct_if = []          # [COMPTIME] por cada if abierto: estado comptime inicial y del then
 
     @property
     def unidad(self) -> UnidadCodigo:
@@ -397,9 +400,10 @@ class GeneradorCodigo:
 
         if info.get('comptime') and info.get('uso') != 'parametro':
             valor_constante = self.ambitos.obtener_valor_comptime(mangleado)
-            # Dentro de un WHILE el valor cambia en cada vuelta: si se reemplazara por el
-            # valor del momento de compilación, el ciclo no terminaría nunca. Se usa la variable.
-            if self.nivel_while > 0 and (valor_constante is not None or mangleado in self.ct_modificadas):
+            # Valor desconocido en compilación (modificada en un while/if) o dentro de un
+            # while (el valor cambia en cada vuelta): se usa la variable en ejecución.
+            if (mangleado in self.ct_en_ejecucion
+                    or (self.nivel_while > 0 and valor_constante is not None)):
                 return Operando(mangleado, info['tipo'])
             if valor_constante is not None:
                 return valor_constante
@@ -539,6 +543,20 @@ class GeneradorCodigo:
                 if 0 <= resultado_val <= MAX_UI:
                     return self.constante_ui(resultado_val)
 
+        # Plegado de constantes flotantes (2.0 + 3.0 -> 5.0)
+        elif tipo == DOUBLEF and self._es_constante(izq.ref) and self._es_constante(der.ref):
+            val1, val2 = self._flt(izq.ref), self._flt(der.ref)
+            if op == '/' and val2 == 0.0:
+                self.errores.semantico(linea, "División por cero en tiempo de compilación.")
+                return ERR
+            res = {'+': lambda: val1 + val2, '-': lambda: val1 - val2,
+                   '*': lambda: val1 * val2, '/': lambda: val1 / val2}[op]()
+            cero_exacto = res == 0.0 and (val1 == 0.0 or val2 == 0.0 or op in '+-')
+            # Fuera de rango (overflow/underflow) no se pliega: el terceto conserva el
+            # control de ejecución.
+            if cero_exacto or MIN_POS < abs(res) < MAX_POS:
+                return self.constante_float(repr(res + 0.0))
+
         return Operando(self.unidad.emitir(op, ref1, ref2, tipo), tipo, conv)
 
     def negar(self, expr, linea) -> Operando:
@@ -547,6 +565,8 @@ class GeneradorCodigo:
         if expr.tipo == UINTEGER:
             self.errores.semantico(linea, "no se puede aplicar signo negativo a un UINTEGER.")
             return ERR
+        if expr.tipo == DOUBLEF and self._es_constante(expr.ref):
+            return self.constante_float(repr(-self._flt(expr.ref) + 0.0))
         return Operando(self.unidad.emitir('NEG', expr.ref, None, expr.tipo), expr.tipo, expr.conv)
 
     def comparacion(self, op, izq, der, linea) -> Operando:
@@ -592,6 +612,39 @@ class GeneradorCodigo:
     def _es_constante(self, ref) -> bool:
         return isinstance(ref, str) and (ref.endswith('$ui') or self.tabla.buscar(ref, 'FLOAT') is not None)
 
+    @staticmethod
+    def _flt(ref) -> float:
+        """Lexema de constante flotante (admite exponente con 'd') -> float."""
+        return float(ref.lower().replace('d', 'e'))
+
+    # ---------------- estado COMPTIME (para IF) ----------------
+    def _estado_ct(self):
+        return (dict(self.ambitos.valores_comptime), set(self.ct_en_ejecucion))
+
+    def _poner_estado_ct(self, estado):
+        valores, ejec = estado
+        vc = self.ambitos.valores_comptime
+        vc.clear()
+        vc.update(valores)
+        self.ct_en_ejecucion.clear()
+        self.ct_en_ejecucion.update(ejec)
+
+    def _fusionar_ct(self, a, b):
+        """Une los estados de dos caminos posibles. Lo que coincide se conserva;
+        lo que difiere pasa a ser variable de ejecución (valor desconocido en compilación)."""
+        va, ea = a
+        vb, eb = b
+        nuevos_v, nuevos_e = {}, set()
+        for n in set(va) | set(vb) | ea | eb:
+            if (va.get(n), n in ea) == (vb.get(n), n in eb):
+                if n in va:
+                    nuevos_v[n] = va[n]
+                if n in ea:
+                    nuevos_e.add(n)
+            else:
+                nuevos_e.add(n)
+        self._poner_estado_ct((nuevos_v, nuevos_e))
+
     def asignacion(self, destino, expr, linea) -> Operando:
         if ERROR in (destino.tipo, expr.tipo):
             return destino
@@ -612,12 +665,12 @@ class GeneradorCodigo:
                     f"cuya condición no se puede determinar en tiempo de compilación.")
                 return destino
             if self.nivel_while > 0 and self._es_comptime_puro(expr.ref):
-                # dentro de un WHILE (de condición estática) el valor no se registra:
-                # la variable se maneja en ejecución y su valor queda desconocido al salir.
+                # dentro de un WHILE el valor deja de ser conocido, también al salir del bucle
                 self.ambitos.valores_comptime.pop(destino.ref, None)
-                self.ct_modificadas.add(destino.ref)
+                self.ct_en_ejecucion.add(destino.ref)
             elif self._es_constante(expr.ref):
                 self.ambitos.registrar_valor_comptime(destino.ref, expr, linea)
+                self.ct_en_ejecucion.discard(destino.ref)   # vuelve a ser conocida
             else:
                 self.errores.semantico(
                     linea,
@@ -847,6 +900,7 @@ class GeneradorCodigo:
         if cond.tipo not in (BOOL, ERROR):
             self.errores.semantico(linea, "la condición del IF debe ser una comparación.")
         self.pila_dinamica.append(not self._cond_estatica(cond))
+        self.pila_ct_if.append({'ini': self._estado_ct(), 'then': None})
         bf = self.unidad.emitir('BF', cond.ref, None)
         self.pila_control.append(('BF', bf))
 
@@ -859,14 +913,24 @@ class GeneradorCodigo:
         bi = self.unidad.emitir('BI')
         self.unidad.completar_salto(bf, self.unidad.proximo())
         self.pila_control.append(('BI', bi))
+        # el else parte del estado previo al if; se guarda lo que dejó el then
+        if self.pila_ct_if:
+            e = self.pila_ct_if[-1]
+            e['then'] = self._estado_ct()
+            self._poner_estado_ct(e['ini'])
 
     def if_fin(self):
-        """FIN DEL IF: desapila el salto pendiente y lo completa con el próximo terceto."""
+        """FIN DEL IF: desapila el salto pendiente y lo completa con el próximo terceto.
+        Fusiona los estados comptime de los dos caminos posibles."""
         if not self._tope_es('BF', 'BI'):
             return
         _, pendiente = self.pila_control.pop()
         if self.pila_dinamica:
             self.pila_dinamica.pop()
+        if self.pila_ct_if:
+            e = self.pila_ct_if.pop()
+            otro = e['then'] if e['then'] is not None else e['ini']   # sin else: el camino "no entra"
+            self._fusionar_ct(otro, self._estado_ct())
         self.unidad.completar_salto(pendiente, self.unidad.proximo())
 
     def while_inicio(self):
@@ -892,8 +956,6 @@ class GeneradorCodigo:
         if self.pila_dinamica:
             self.pila_dinamica.pop()
         self.nivel_while -= 1
-        if self.nivel_while == 0:
-            self.ct_modificadas.clear()
         self.unidad.emitir('BI', inicio)
         self.unidad.completar_salto(bf, self.unidad.proximo())
 

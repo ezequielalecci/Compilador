@@ -1,37 +1,10 @@
-"""
-main.py  -  Compilador Grupo 19: léxico -> sintáctico -> código intermedio (tercetos) -> Assembler
-
-USO
-    python main.py <prueba>             compila una prueba (ruta, o nombre dentro de test/)
-    python main.py --lista              lista las pruebas disponibles
-    python main.py --todas [filtro]     corre todas las pruebas (o las que contengan 'filtro')
-                                        y verifica ok_* -> sin errores / err_* -> con errores
-
-    El nombre de la prueba puede abreviarse mientras sea único:
-        python main.py ok_uinteger_literales
-        python main.py uinteger_negativo
-
-SALIDA (siempre en este orden)
-    1. errores y warnings
-    2. tercetos de cada unidad (main y funciones)
-    3. tabla de símbolos
-    Si NO hay errores se genera salida.asm (MASM32) y ensamblar.bat.
-
-OPCIONES PARA ACOTAR LA SALIDA
-    --no-errores,  -E     no muestra errores/warnings
-    --no-tercetos, -T     no muestra los tercetos
-    --no-ts,       -S     no muestra la tabla de símbolos
-    --solo X [Y ...]      muestra únicamente lo indicado (errores, tercetos, ts)
-    --no-asm              no genera salida.asm ni ensamblar.bat
-"""
-
 import argparse
 import io
 import os
 import sys
 from contextlib import redirect_stdout
 
-import SintacticoRemasterizado as sintactico
+import AnalizadorSintactico as sintactico
 from AnalizadorLexico import AnalizadorLexico
 from CodigoIntermedio import (GeneradorCodigo, GestorAmbitos, Errores, TablaSimbolosSemantica)
 from GeneradorAssembler import GeneradorAssembler
@@ -86,9 +59,6 @@ def resolver_prueba(nombre):
     sys.exit(f"'{nombre}' es ambiguo, coincide con:\n  " + "\n  ".join(coincidencias))
 
 
-# --------------------------------------------------------------------------
-# Compilación
-# --------------------------------------------------------------------------
 def compilar(codigo, ver_errores=True, ver_tercetos=True, ver_ts=True,
              generar_asm=True, salida_asm='salida.asm', silencioso=False):
     """Compila 'codigo'. Devuelve True si no hubo errores."""
@@ -117,7 +87,6 @@ def compilar(codigo, ver_errores=True, ver_tercetos=True, ver_ts=True,
                    or excepcion is not None)
 
     if not silencioso:
-        # 1) ERRORES
         if ver_errores:
             banner(" ERRORES Y WARNINGS")
             extra = lineas_nuevas(salida_parse.getvalue(), texto_errores)
@@ -131,13 +100,11 @@ def compilar(codigo, ver_errores=True, ver_tercetos=True, ver_ts=True,
                 print("(sin errores ni warnings)")
             print()
 
-        # 2) TERCETOS
         if ver_tercetos:
             banner(" CÓDIGO INTERMEDIO (TERCETOS)")
             gen.imprimir()
             print()
 
-        # 3) TABLA DE SÍMBOLOS
         if ver_ts:
             banner(" TABLA DE SÍMBOLOS")
             ts.imprimir_tabla()
@@ -191,9 +158,6 @@ def correr_todas(filtro=''):
     return fallas == 0
 
 
-# --------------------------------------------------------------------------
-# Línea de comandos
-# --------------------------------------------------------------------------
 def main():
     ap = argparse.ArgumentParser(
         description="Compilador Grupo 19. Por defecto muestra errores, tercetos y tabla de símbolos.")

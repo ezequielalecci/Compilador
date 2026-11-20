@@ -1,32 +1,4 @@
-"""
-GeneradorAssembler.py  -  TP4 (Grupo 19)
 
-Genera Assembler Pentium 32 bits (MASM32) a partir de los tercetos del TP3.
-  - Enteros (UINTEGER, 16 bits)  -> registros AX, BX, DX         (DW)
-  - Punto flotante (DOUBLEF, 64) -> co-procesador 80x87          (DQ)
-  - Mecanismo de salida: VARIABLES AUXILIARES: cada terceto aritmetico guarda su
-    resultado en _t<unidad>_<n>; el terceto [n] se referencia con esa variable.
-
-Controles en tiempo de ejecucion (mensaje + ExitProcess):
-  d) overflow en producto de enteros       -> 'mul' + 'jc'
-  e) overflow en producto de flotantes     -> 'fxam' detecta +-infinito
-  f) resta de enteros sin signo negativa   -> 'sub' + 'jc'
-  g) perdida de informacion DOUBLEF->UINT  -> TOUI: parte fraccionaria o fuera de [0, 65535]
-
-Funciones (contrato con los tercetos del TP3):
-    ( ARG  , valor , param_mangleado )   copia el argumento a la variable del parametro
-    ( CALL , nombre_unidad , None )      tipo = UINTEGER / DOUBLEF / None (void)
-    ( RET  , valor , None )              entero -> AX, flotante -> ST(0)
-  'nombre_unidad' debe coincidir con UnidadCodigo.nombre de la funcion; los parametros y
-  variables locales son estaticos (no hay recursion). Los ARG de una llamada se emiten
-  despues de evaluar todos los argumentos y justo antes del CALL.
-  Atributos de objetos ('.'): cualquier simbolo de la TS con uso 'variable' (por ejemplo
-  uno registrado como 'obj.atributo') recibe almacenamiento propio.
-
-Uso (al final del main del parser, si no hubo errores):
-    from GeneradorAssembler import GeneradorAssembler
-    GeneradorAssembler(ts, gen).generar('salida.asm')
-"""
 
 import re
 from CodigoIntermedio import UINTEGER, DOUBLEF
@@ -64,9 +36,6 @@ class GeneradorAssembler:
         self.cadenas = {}     # lexema TS '{texto}' -> etiqueta
         self.flotantes = {}   # lexema TS -> (etiqueta, valor)
 
-    # ------------------------------------------------------------------
-    # Operandos: devuelve (texto_asm, tipo, clase)  clase in {'imm','mem','str'}
-    # ------------------------------------------------------------------
     def _aux(self, uid, n):
         return f'_t{uid}_{n}'
 
@@ -93,9 +62,7 @@ class GeneradorAssembler:
     def e(self, linea):
         self.codigo.append('    ' + linea)
 
-    # ------------------------------------------------------------------
-    # Tercetos
-    # ------------------------------------------------------------------
+
     def _aritmetica(self, uid, i, t):
         a, ta, _ = self._op(t.a1, uid)
         b, _, _ = self._op(t.a2, uid)
@@ -207,9 +174,6 @@ class GeneradorAssembler:
             self.e(f'fld {x}')
         self.e('ret')
 
-    # ---- funciones --------------------------------------------------
-    # Contrato con el TP3 (ver docstring): parametros por valor, copiados a las
-    # variables estaticas del parametro de la funcion (ARG) justo antes del CALL.
     def _arg(self, uid, t):
         src, ts_, _ = self._op(t.a1, uid)
         dst, td, _ = self._op(t.a2, uid)
@@ -271,9 +235,7 @@ class GeneradorAssembler:
         if len(tercs) in destinos:
             self.codigo.append(f'L{uid}_{len(tercs)}:')
 
-    # ------------------------------------------------------------------
-    # Programa completo
-    # ------------------------------------------------------------------
+
     def generar(self, ruta='salida.asm'):
         self.codigo = []
         for uid, u in enumerate(self.unidades):

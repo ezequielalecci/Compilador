@@ -6,9 +6,11 @@ comptime uinteger x;
 
 BEGIN
     x := 3$ui;
+
+
     while (x < 10$ui) repeat
     begin
-        x := x + 1$ui;
         pout(x);
+        x := x + 1$ui;
     end;
 END
