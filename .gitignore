@@ -13,3 +13,4 @@ salida.asm
 salida.obj
 salida.exe
 vscode/
+*.bat
