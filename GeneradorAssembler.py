@@ -48,7 +48,11 @@ ERRORES_RT = {
 
 
 def _san(nombre):
-    return re.sub(r'[^0-9a-zA-Z_]', '_', str(nombre))
+    s = str(nombre)
+    # Reemplazamos los puntos y dos puntos estructurales por '@' (válido en MASM, prohibido para el usuario)
+    # Ya que MASM usa el . y : para directivas, estructuras especiales y etiquetas de salto
+    s = s.replace('.', '@').replace(':', '@')
+    return re.sub(r'[^0-9a-zA-Z@_]', '_', s)
 
 
 class GeneradorAssembler:

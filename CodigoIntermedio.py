@@ -45,6 +45,9 @@ class Errores:
     def __init__(self):
         self.lista = []
 
+    def lexico(self, linea, mensaje):  
+        self.lista.append((linea, f"Error Léxico: {mensaje}"))
+
     def semantico(self, linea, mensaje):
         self.lista.append((linea, f"Error Semántico: {mensaje}"))
 

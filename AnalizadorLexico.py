@@ -9,10 +9,12 @@ MAX_UI = 65535
 
 
 class AnalizadorLexico(Lexer):
-    tokens = {IF, ELSE, END_IF, BEGIN, END, POUT, RET, CLASS, FUNCTION, DOUBLEF, UINTEGER,
-              ID, CONST_UI, PLUS, MINUS, TIMES, DIVIDE, TWO_POINTS_ASSING, ASSIGN,
-              LESS, LESS_EQUAL, GREATER, GREATER_EQUAL, EQUALS_EQUALS, NOT_EQUALS,
-              TEXT_STRING, DOT, WHILE, REPEAT, AUTO, COMPTIME, FRIEND, PRIVATE, TOUI, EXTENDS}
+    tokens = {
+                IF, ELSE, END_IF, BEGIN, END, POUT, RET, CLASS, FUNCTION, DOUBLEF, UINTEGER,
+                ID, CONST_UI, PLUS, MINUS, TIMES, DIVIDE, TWO_POINTS_ASSING, ASSIGN,
+                LESS, LESS_EQUAL, GREATER, GREATER_EQUAL, EQUALS_EQUALS, NOT_EQUALS,
+                TEXT_STRING, DOT, WHILE, REPEAT, AUTO, COMPTIME, FRIEND, PRIVATE, TOUI, EXTENDS
+            }
 
     literals = {'(', ')', ',', ';'}
 
@@ -27,13 +29,26 @@ class AnalizadorLexico(Lexer):
 
     ignore = ' \t'
 
-    def __init__(self, tabla_simbolos):
+    def __init__(self, tabla_simbolos, errores=None):
         self.tabla_simbolos = tabla_simbolos
+        self.errores = errores
         self.prev_type = None
+
+    def _registrar_error(self, linea, mensaje):
+        """Imprime y registra un error léxico formal."""
+        print(f"Error Léxico (Línea {linea}): {mensaje}")
+        if self.errores and hasattr(self.errores, 'lexico'):
+            self.errores.lexico(linea, mensaje)
+
+    def _registrar_warning(self, linea, mensaje):
+        """Imprime y registra un warning léxico."""
+        print(f"Warning Léxico (Línea {linea}): {mensaje}")
+        if self.errores and hasattr(self.errores, 'warning'):
+            self.errores.warning(linea, mensaje)
 
 
     def tokenize(self, text, lineno=1, index=0):
-        # Recordamos el tipo del token anterior para distinguir "a -1.5" (resta) de "-1.5" (constante)
+        # Recordamos el tipo del token anterior para distinguir "x -1.5" (resta) de "-1.5" (constante)
         self.prev_type = None
         for tok in super().tokenize(text, lineno, index):
             self.prev_type = tok.type
@@ -59,7 +74,7 @@ class AnalizadorLexico(Lexer):
 
     @_(r'\{\{[\s\S]*')
     def ignore_comment_unclosed(self, t):
-        print(f"Warning Léxico (Línea {t.lineno}): Comentario '{{{{' sin cerrar; se ignora hasta el fin del archivo.")
+        self._registrar_warning(t.lineno, "Comentario '{{' sin cerrar; se ignora hasta el fin del archivo.")
         self.lineno += t.value.count('\n')
 
 
@@ -74,12 +89,12 @@ class AnalizadorLexico(Lexer):
 
     @_(r'\{[^}\n]*')
     def ignore_llave_sin_cierre(self, t):
-        print(f"Error Léxico (Línea {t.lineno}): Cadena sin llave de cierre '}}'.")
+        self._registrar_error(t.lineno, "Cadena sin llave de cierre '}'.")
 
 
     @_(r'\}')
     def ignore_llave_sin_apertura(self, t):
-        print(f"Error Léxico (Línea {t.lineno}): Cadena sin llave de apertura '{{'.")
+        self._registrar_error(t.lineno, "Cadena sin llave de apertura '{'.")
 
 
   
@@ -91,12 +106,12 @@ class AnalizadorLexico(Lexer):
 
         lexema_orig = t.value
         if lexema_orig[0] == '-':
-            print(f"WARNING Léxico (Línea {t.lineno}): La constante unsigned '{lexema_orig}' no puede llevar signo negativo. Se le asignará su valor positivo")
+            self._registrar_warning(t.lineno, f"La constante unsigned '{lexema_orig}' no puede llevar signo negativo. Se le asignará su valor positivo")
 
         digitos = lexema_orig.lstrip('+-')[:-3]
         valor = int(digitos)
         if valor > MAX_UI:
-            print(f"WARNING Léxico (Línea {t.lineno}): La constante '{lexema_orig}' está fuera del rango [0, {MAX_UI}]. Se le asiganara el máximo valor permitido")
+            self._registrar_warning(t.lineno, f"La constante '{lexema_orig}' está fuera del rango [0, {MAX_UI}]. Se le asiganara el máximo valor permitido")
             valor = MAX_UI          # valor de recuperación: el parser sigue
 
         t.value = valor
@@ -114,12 +129,11 @@ class AnalizadorLexico(Lexer):
         lexema_orig = t.value
 
         if lexema_orig.lower().endswith(('d', 'd+', 'd-')):
-            print(f"Error Léxico (Línea {t.lineno}): Falta el valor del exponente después de la 'd' en '{lexema_orig}'.")
+            self._registrar_error(t.lineno, f"Falta el valor del exponente después de la 'd' en '{lexema_orig}'.")
             return 
         
         if '.' not in lexema_orig:
-            print(f"Error Léxico (Línea {t.lineno}): '{lexema_orig}' no es una constante válida "
-                  f"(flotante sin parte decimal o entero sin sufijo $ui).")
+            self._registrar_error(t.lineno, f"'{lexema_orig}' no es una constante válida (flotante sin parte decimal o entero sin sufijo $ui).")
             return 
 
         cadena_std = lexema_orig.lower().replace('d', 'e')
@@ -136,7 +150,7 @@ class AnalizadorLexico(Lexer):
             signo = -1.0 if valor < 0 or lexema_orig.startswith('-') else 1.0
             valor_abs = abs(valor)
             if not (MIN_POS < valor_abs < MAX_POS):
-                print(f"Error Léxico (Línea {t.lineno}): El valor flotante '{lexema_orig}' está fuera del rango permitido de 64 bits. Se le asiganará el máximo valor posible")
+                self._registrar_warning(t.lineno, f"El valor flotante '{lexema_orig}' está fuera del rango permitido de 64 bits. Se le asiganará el máximo valor posible")
                 valor = signo * (MAX_POS if valor_abs >= MAX_POS else MIN_POS)
                 lexema_ts = repr(valor)
 
@@ -156,13 +170,13 @@ class AnalizadorLexico(Lexer):
             return t
 
         if not t.value.islower():
-            print(f"Error Léxico (Línea {t.lineno}): Identificador '{t.value}' no permite mayúsculas.")
+            self._registrar_error(t.lineno, f"Identificador '{t.value}' no permite mayúsculas.")
             t.value = t.value.lower()
 
         if len(t.value) > 22:
             original = t.value
             t.value = t.value[:22]
-            print(f"Warning (Línea {t.lineno}): ID '{original}' supera 22 caracteres. Truncado a '{t.value}'.")
+            self._registrar_warning(t.lineno, f"ID '{original}' supera 22 caracteres. Truncado a '{t.value}'.")
 
         t.type = 'ID'
         self.tabla_simbolos.insertar(t.value, 'ID')
@@ -178,7 +192,7 @@ class AnalizadorLexico(Lexer):
         self.lineno += t.value.count('\n')
 
     def error(self, t):
-        print(f"Error Léxico (Línea {self.lineno}): Carácter ilegal '{t.value[0]}'")
+        self._registrar_error(self.lineno, f"Carácter ilegal '{t.value[0]}'")
         self.index += 1
 
     # OPERADORES 
